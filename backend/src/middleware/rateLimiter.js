@@ -183,6 +183,7 @@ module.exports = {
   rl,
   generalLimiter,
   strictLimiter,
+  syncLimiter,
   verifyLimiter,
   reminderTriggerLimiter,
   bulkImportLimiter,

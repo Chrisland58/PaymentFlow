@@ -39,6 +39,7 @@ const webhookEndpointRoutes = require('./routes/webhookEndpointRoutes');
 const webhookDeliveryRoutes = require('./routes/webhookDeliveryRoutes');
 const paymentPlanRoutes = require('./routes/paymentPlanRoutes');
 const auditRoutes = require('./routes/auditRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
 const superAdminRoutes = require('./routes/superAdminRoutes');
 const cspReportRoutes = require('./routes/cspReportRoutes');
 
