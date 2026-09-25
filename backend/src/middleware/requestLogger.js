@@ -21,7 +21,7 @@
 const { logger } = require('../utils/logger');
 const { httpRequestDurationSeconds } = require('../metrics');
 const { generateCorrelationId } = require('../utils/correlationId');
-const { REQUEST_LOG_REDACT_FIELDS } = require('../utils/redactConfig');
+const { REQUEST_LOG_REDACT_FIELDS, redactLogValue } = require('../utils/redactConfig');
 
 const DEFAULT_REDACT_FIELDS = REQUEST_LOG_REDACT_FIELDS;
 
@@ -44,13 +44,12 @@ function getRedactFields() {
 function redact(obj) {
   if (!obj || typeof obj !== 'object') return obj;
   const fields = getRedactFields();
-  const result = { ...obj };
-  for (const key of Object.keys(result)) {
-    if (fields.includes(key)) {
-      result[key] = '[REDACTED]';
-    }
+  if (process.env.LOG_REDACT_FIELDS) {
+    return Object.fromEntries(Object.entries(obj).map(([key, value]) => [
+      key, fields.includes(key) ? '[REDACTED]' : redactLogValue(value),
+    ]));
   }
-  return result;
+  return redactLogValue(obj);
 }
 
 function redactHeaders(headers) {
