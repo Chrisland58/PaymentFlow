@@ -5,6 +5,7 @@ import { generateStellarPaymentUri, availableMemoTypes } from "../utils/stellarU
 import { encodeMemo } from "../utils/stellarMemo";
 import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds } from "../services/api";
 import DisputeForm from "./DisputeForm";
+import PaymentConfirmationStep from "./PaymentConfirmationStep";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconCopy, IconCheck, IconAlertTriangle, IconSearch, IconDownload } from "./Icons";
 
@@ -64,6 +65,9 @@ export default function PaymentForm({ initialStudentId = "" }) {
   const [disputingTx, setDisputingTx]           = useState(null);
   const [disputedTxs, setDisputedTxs]         = useState(new Set());
   const [refunds, setRefunds]                 = useState({}); // txHash -> refund
+  // #101 — confirmation step: after lookup, the user must review and confirm
+  // the payment details before the QR code and wallet address are revealed.
+  const [confirmed, setConfirmed]             = useState(false);
   // #1118 — wallets that cannot send free-text memos can switch the QR code to
   // MEMO_ID or MEMO_HASH; all three decode back to the same payment reference.
   const [memoType, setMemoType]               = useState("MEMO_TEXT");
@@ -103,6 +107,7 @@ export default function PaymentForm({ initialStudentId = "" }) {
     setPaymentPlan(null);
     setHasDeletedPayments(false);
     setBalanceError(false);
+    setConfirmed(false); // #101 — reset confirmation when looking up a new student
     setLoading(true);
     setPaymentsLoading(true);
     try {
@@ -288,6 +293,26 @@ export default function PaymentForm({ initialStudentId = "" }) {
 
           {student && instructions && (
             <div style={{ marginTop: "1.25rem" }}>
+              {/* #101 — confirmation step: user must review & confirm before
+                  payment details (QR code, wallet address) are revealed.
+                  Once confirmed, this block renders the full payment UI. */}
+              {!confirmed && (
+                <PaymentConfirmationStep
+                  student={student}
+                  instructions={instructions}
+                  onConfirm={() => setConfirmed(true)}
+                  onEdit={() => {
+                    setStudent(null);
+                    setInstructions(null);
+                    setPayments(null);
+                    setConfirmed(false);
+                    setStudentId("");
+                  }}
+                />
+              )}
+
+              {confirmed && (
+              <>
               {isTestnet && (
                 <div className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
                   <IconAlertTriangle size={14} />
@@ -486,6 +511,8 @@ export default function PaymentForm({ initialStudentId = "" }) {
                   {t("paymentForm.acceptedAssets")} {instructions.acceptedAssets.map(a => a.displayName).join(", ")}
                 </p>
               )}
+              </>
+              )} {/* end confirmed */}
             </div>
           )}
 
