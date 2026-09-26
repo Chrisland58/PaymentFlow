@@ -6,6 +6,7 @@ import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
 import SseDegradedBanner from "../components/SseDegradedBanner";
 import RequireAdmin from "../components/RequireAdmin";
+import EmptyState, { StandaloneEmptyState } from "../components/EmptyState";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
 import {
@@ -406,16 +407,12 @@ function Dashboard() {
           <ErrorBoundary>
             {studentsError ? (
               <div className="card-body">
-                <div role="alert" className="alert alert-danger">
-                  <span style={{ flex: 1 }}>{studentsError}</span>
-                  <button
-                    onClick={() => fetchStudents(page, debouncedSearch, statusFilter, classFilter)}
-                    className="btn btn-sm btn-ghost"
-                    style={{ color: "inherit", borderColor: "currentColor", opacity: 0.8 }}
-                  >
-                    {t("actions.retry")}
-                  </button>
-                </div>
+                <StandaloneEmptyState
+                    variant="error"
+                  title={t("dashboard.failedToLoadStudents")}
+                  description="Check your connection and try again."
+                  action={{ label: t("actions.retry"), onClick: () => fetchStudents(page, debouncedSearch, statusFilter, classFilter) }}
+                />
               </div>
             ) : (
               <div style={{ overflowX: "auto" }} aria-busy={studentsLoading} aria-label={t("dashboard.studentTableAria")}>
@@ -432,28 +429,18 @@ function Dashboard() {
                   </thead>
                   <tbody>
                     {studentsLoading ? (
-                      Array.from({ length: 6 }).map((_, i) => (
-                        <tr key={i}>
-                          <td><div className="skel-block" style={{ height: 12, width: 72 }} /></td>
-                          <td><div className="skel-block" style={{ height: 12, width: 130 }} /></td>
-                          <td><div className="skel-block" style={{ height: 12, width: 44 }} /></td>
-                          <td><div className="skel-block" style={{ height: 12, width: 56 }} /></td>
-                          <td><div className="skel-block" style={{ height: 20, width: 52, borderRadius: 20 }} /></td>
-                          <td><div className="skel-block" style={{ height: 28, width: 42, borderRadius: 6 }} /></td>
-                        </tr>
-                      ))
+                      <EmptyState variant="loading" colSpan={6} />
                     ) : students.length === 0 ? (
-                      <tr>
-                        <td colSpan="6">
-                          <div className="empty-state">
-                            <div className="empty-state-icon"><IconSearch size={26} /></div>
-                            <div className="empty-state-title">{t("dashboard.emptyTitle")}</div>
-                            <div className="empty-state-desc">
-                              {search || statusFilter !== "all" || classFilter ? t("dashboard.emptyFilters") : t("dashboard.emptyNone")}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
+                      <EmptyState
+                        variant={search || statusFilter !== "all" || classFilter ? "filtered" : "empty"}
+                        colSpan={6}
+                        title={search || statusFilter !== "all" || classFilter ? t("dashboard.emptyTitle") : "No students yet"}
+                        description={search || statusFilter !== "all" || classFilter ? t("dashboard.emptyFilters") : t("dashboard.emptyNone")}
+                        action={search || statusFilter !== "all" || classFilter ? {
+                          label: "Clear filters",
+                          onClick: () => { setSearch(""); setStatusFilter("all"); setClassFilter(""); }
+                        } : undefined}
+                      />
                     ) : students.map(s => {
                       const st = (s.status || "unpaid").toLowerCase();
                       const badge = STATUS_BADGE[st] || STATUS_BADGE.unpaid;
