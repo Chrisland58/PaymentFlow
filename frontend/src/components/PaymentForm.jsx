@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useTranslation } from "react-i18next";
 import { generateStellarPaymentUri, availableMemoTypes } from "../utils/stellarUri";
 import { encodeMemo } from "../utils/stellarMemo";
-import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds } from "../services/api";
+import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentPlan, getPaymentRefunds } from "../services/api";
 import DisputeForm from "./DisputeForm";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconCopy, IconCheck, IconAlertTriangle, IconSearch, IconDownload } from "./Icons";
@@ -49,6 +49,7 @@ function InfoRow({ label, children }) {
 }
 
 export default function PaymentForm({ initialStudentId = "" }) {
+  const { t } = useTranslation();
   const [studentId, setStudentId]             = useState(initialStudentId);
   const [shareCopied, setShareCopied]         = useState(false);
   const [student, setStudent]                 = useState(null);
@@ -119,11 +120,16 @@ export default function PaymentForm({ initialStudentId = "" }) {
         }),
         getPaymentPlan(id, { signal }).catch(() => null),
       ]);
-      setStudent(stuRes.data);
-      setInstructions(instrRes.data);
-      const paymentsList = payRes.data?.payments ?? payRes.data ?? [];
+      if (stuRes.status === "rejected") throw stuRes.reason;
+
+      setStudent(stuRes.value?.data ?? null);
+      setInstructions(instrRes.status === "fulfilled" ? instrRes.value?.data ?? null : null);
+      setPaymentPlan(planRes.status === "fulfilled" ? planRes.value?.data ?? null : null);
+      const paymentsData = payRes.status === "fulfilled" ? payRes.value?.data : [];
+      const paymentsList = paymentsData?.payments ?? paymentsData ?? [];
       setPayments(paymentsList);
-      setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
+      const balanceData = balRes.status === "fulfilled" ? balRes.value?.data : null;
+      setHasDeletedPayments(balanceData?.hasDeletedPayments === true);
       // Fetch refunds for each payment
       const newRefunds = {};
       for (const p of paymentsList) {
@@ -228,7 +234,6 @@ export default function PaymentForm({ initialStudentId = "" }) {
   }
 
   const isTestnet = process.env.NEXT_PUBLIC_STELLAR_NETWORK === "testnet";
-  const { t } = useTranslation();
 
   return (
     <>
