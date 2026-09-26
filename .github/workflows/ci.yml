@@ -411,6 +411,32 @@ jobs:
         if: always() && steps.changes.outputs.run == 'true'
         run: docker compose down -v
 
+  # ── #90: Cross-browser smoke matrix ─────────────────────────────────────
+  cross-browser-smoke:
+    name: Cross-browser smoke matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+      - run: npm ci
+      - name: Run cross-browser smoke matrix
+        run: npx jest tests/smoke/ --forceExit
+      - name: Upload smoke test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshots
+          path: test-results/smoke/
+          retention-days: 7
+
   # ── #1389: Required gate ─────────────────────────────────────────────────
   # A single job that every branch-protection rule needs to require. Add this
   # job name ("CI gate") as the sole required status check in GitHub's branch
@@ -435,5 +461,6 @@ jobs:
       - build-frontend
       - test
       - coverage
+      - cross-browser-smoke
     steps:
       - run: echo "All required checks passed."
