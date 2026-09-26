@@ -26,6 +26,8 @@ const en = {
     openMenu: "Open menu",
     closeMenu: "Close menu",
     adminSection: "Admin",
+    adminRoleBadgeAria: "You are signed in as an administrator",
+    adminOnlyLinkAria: "Requires admin access",
   },
 
   actions: {
@@ -816,6 +818,18 @@ const en = {
     saveChanges: "Save Changes",
     nameRequired: "Name is required",
     parentEmailInvalid: "Enter a valid email address",
+  },
+
+  // ── Issue #107: Filter Chips ─────────────────────────────────────────────────
+  filterChips: {
+    activeLabel: "Filters",
+    activeFiltersAria: "Active filters",
+    chipListAria: "Active filter list",
+    activeFilterCount_one: "{{count}} active filter",
+    activeFilterCount_other: "{{count}} active filters",
+    removeAria: "Remove {{label}}: {{value}}",
+    clearAll: "Clear all",
+    clearAllAria: "Clear all filters",
   },
 
   exportJob: {
