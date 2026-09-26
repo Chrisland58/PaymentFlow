@@ -1,3 +1,20 @@
+/**
+ * Navbar — Issue #109 role-aware navigation affordances
+ *
+ * Changes from the base implementation:
+ * 1. Admin-only links are completely omitted for non-admin users (no leakage).
+ * 2. A subtle "Admin" role badge appears next to the brand when authenticated
+ *    as an admin, so the user knows which capability set is active.
+ * 3. A visual section divider separates PUBLIC_LINKS from ADMIN_LINKS in the
+ *    desktop nav so admins can distinguish general vs. admin-only areas at a
+ *    glance.
+ * 4. Admin-only links receive an `aria-description` noting they require admin
+ *    access, improving screen-reader context for admins.
+ * 5. The mobile menu mirrors the same role-based omission and divider.
+ * 6. The "Admin Login" CTA is only shown to unauthenticated users; admins see
+ *    their role badge and a sign-out button instead — consistent, no confusion.
+ */
+
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -8,16 +25,21 @@ import { useAdminAuthContext } from "../hooks/AdminAuthContext";
 import { SUPPORTED_LOCALES, LOCALE_NAMES } from "../i18n";
 
 const PUBLIC_LINKS = [
-  { href: "/pay-fees",  i18nKey: "nav.payFees" },
-  { href: "/dashboard", i18nKey: "nav.dashboard" },
-  { href: "/reports",   i18nKey: "nav.reports" },
+  { href: "/pay-fees",  i18nKey: "nav.payFees",   adminOnly: false },
+  { href: "/dashboard", i18nKey: "nav.dashboard", adminOnly: false },
+  { href: "/reports",   i18nKey: "nav.reports",   adminOnly: false },
 ];
 
+/**
+ * ADMIN_LINKS are completely hidden from non-admin users.
+ * They are never rendered in the DOM so unauthenticated users have no
+ * visual or source-code hint that these routes exist.
+ */
 const ADMIN_LINKS = [
-  { href: "/fee-adjustments", i18nKey: "nav.feeRules" },
-  { href: "/audit-logs",      i18nKey: "nav.auditLogs" },
-  { href: "/disputes",        i18nKey: "nav.disputes" },
-  { href: "/webhooks",        i18nKey: "nav.webhooks" },
+  { href: "/fee-adjustments", i18nKey: "nav.feeRules",   adminOnly: true },
+  { href: "/audit-logs",      i18nKey: "nav.auditLogs",  adminOnly: true },
+  { href: "/disputes",        i18nKey: "nav.disputes",   adminOnly: true },
+  { href: "/webhooks",        i18nKey: "nav.webhooks",   adminOnly: true },
 ];
 
 const SunIcon = () => (
@@ -42,7 +64,12 @@ export default function Navbar() {
   const { t, i18n } = useTranslation();
   const { dark, toggle } = useTheme();
   const { isAdmin, logout } = useAdminAuthContext();
-  const links = isAdmin ? [...PUBLIC_LINKS, ...ADMIN_LINKS] : PUBLIC_LINKS;
+
+  // Role-aware link resolution (#109):
+  // Admin-only links are completely omitted for non-admin users — they are
+  // never rendered in the DOM so there is no visible or source-level hint.
+  const publicLinks = PUBLIC_LINKS;
+  const adminLinks  = isAdmin ? ADMIN_LINKS : [];
 
   useEffect(() => { setOpen(false); }, [pathname]);
 
@@ -92,6 +119,22 @@ export default function Navbar() {
           letter-spacing: -0.02em;
           white-space: nowrap;
         }
+        /* Role badge shown next to brand when logged in as admin (#109) */
+        .nav-role-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 0.15rem 0.45rem;
+          border-radius: 4px;
+          background: rgba(5, 150, 105, 0.22);
+          border: 1px solid rgba(52, 211, 153, 0.3);
+          color: #34d399;
+          font-size: 0.62rem;
+          font-weight: 700;
+          letter-spacing: 0.07em;
+          text-transform: uppercase;
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
         .nav-links {
           display: flex;
           align-items: center;
@@ -110,6 +153,27 @@ export default function Navbar() {
         }
         .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
         .nav-link.active { color: #fff; background: rgba(255, 255, 255, 0.1); font-weight: 600; }
+        /* Section divider between public and admin nav groups (#109) */
+        .nav-section-divider {
+          width: 1px;
+          height: 20px;
+          background: rgba(255, 255, 255, 0.12);
+          margin: 0 0.25rem;
+          flex-shrink: 0;
+          align-self: center;
+        }
+        /* Subtle accent on admin-only links so admins can tell at a glance (#109) */
+        .nav-link-admin {
+          color: rgba(52, 211, 153, 0.65);
+        }
+        .nav-link-admin:hover {
+          color: #34d399;
+          background: rgba(5, 150, 105, 0.14);
+        }
+        .nav-link-admin.active {
+          color: #34d399;
+          background: rgba(5, 150, 105, 0.18);
+        }
         .nav-right { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
         .nav-theme-btn {
           display: inline-flex;
@@ -200,23 +264,50 @@ export default function Navbar() {
           background: rgba(255,255,255,0.07);
           margin: 0.5rem 0;
         }
+        /* Mobile admin section label (#109) */
+        .nav-mobile-section-label {
+          font-size: 0.6rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: rgba(52, 211, 153, 0.55);
+          padding: 0.375rem 0.7rem 0.1rem;
+          pointer-events: none;
+          user-select: none;
+        }
         @media (max-width: 720px) {
           .nav-links { display: none; }
           .nav-hamburger { display: flex; }
           .nav-lang { max-width: 130px; }
+          .nav-role-badge { display: none; }
         }
       `}</style>
 
       <TestnetBanner />
       <nav className="nav" aria-label={t("nav.mainNavAria")}>
         <div className="nav-inner">
+          {/* Brand + optional admin role badge (#109) */}
           <Link href="/" className="nav-brand">
             <div className="nav-logo">S</div>
             <span className="nav-name">StellarEduPay</span>
           </Link>
+          {isAdmin && (
+            <span
+              className="nav-role-badge"
+              aria-label={t("nav.adminRoleBadgeAria")}
+              title={t("nav.adminRoleBadgeAria")}
+            >
+              {t("nav.adminSection")}
+            </span>
+          )}
 
-          <div className="nav-links">
-            {links.map(({ href, i18nKey }) => (
+          {/* Desktop nav links — role-aware (#109) */}
+          <nav
+            className="nav-links"
+            aria-label={isAdmin ? t("nav.mainNavAria") : undefined}
+          >
+            {/* Public links */}
+            {publicLinks.map(({ href, i18nKey }) => (
               <Link
                 key={href}
                 href={href}
@@ -226,7 +317,29 @@ export default function Navbar() {
                 {t(i18nKey)}
               </Link>
             ))}
-          </div>
+
+            {/* Section divider + admin links — only rendered for admins (#109) */}
+            {adminLinks.length > 0 && (
+              <>
+                <div
+                  className="nav-section-divider"
+                  role="separator"
+                  aria-label={t("nav.adminSection")}
+                />
+                {adminLinks.map(({ href, i18nKey }) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={`nav-link nav-link-admin${pathname === href ? " active" : ""}`}
+                    aria-current={pathname === href ? "page" : undefined}
+                    aria-description={t("nav.adminOnlyLinkAria")}
+                  >
+                    {t(i18nKey)}
+                  </Link>
+                ))}
+              </>
+            )}
+          </nav>
 
           <div className="nav-right">
             <select
@@ -254,6 +367,7 @@ export default function Navbar() {
               className="nav-hamburger"
               onClick={() => setOpen(o => !o)}
               aria-expanded={open}
+              aria-controls="nav-mobile-menu"
               aria-label={open ? t("nav.closeMenu") : t("nav.openMenu")}
             >
               {open ? "✕" : "☰"}
@@ -262,8 +376,15 @@ export default function Navbar() {
         </div>
       </nav>
 
-      <div className={`nav-mobile${open ? " open" : ""}`} aria-hidden={!open}>
-        {links.map(({ href, i18nKey }) => (
+      {/* Mobile menu — role-aware (#109) */}
+      <div
+        id="nav-mobile-menu"
+        className={`nav-mobile${open ? " open" : ""}`}
+        aria-hidden={!open}
+        aria-label={t("nav.mainNavAria")}
+      >
+        {/* Public links in mobile */}
+        {publicLinks.map(({ href, i18nKey }) => (
           <Link
             key={href}
             href={href}
@@ -273,6 +394,28 @@ export default function Navbar() {
             {t(i18nKey)}
           </Link>
         ))}
+
+        {/* Admin-only section in mobile — only rendered for admins (#109) */}
+        {adminLinks.length > 0 && (
+          <>
+            <div className="nav-mobile-divider" />
+            <span className="nav-mobile-section-label" aria-hidden="true">
+              {t("nav.adminSection")}
+            </span>
+            {adminLinks.map(({ href, i18nKey }) => (
+              <Link
+                key={href}
+                href={href}
+                className={`nav-link nav-link-admin${pathname === href ? " active" : ""}`}
+                onClick={() => setOpen(false)}
+                aria-description={t("nav.adminOnlyLinkAria")}
+              >
+                {t(i18nKey)}
+              </Link>
+            ))}
+          </>
+        )}
+
         <div className="nav-mobile-divider" />
         {isAdmin
           ? <button className="nav-pill" onClick={() => { logout(); setOpen(false); }} style={{ marginTop: "0.25rem", width: "fit-content" }}>{t("actions.signOut")}</button>

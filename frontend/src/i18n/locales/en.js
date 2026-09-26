@@ -26,6 +26,8 @@ const en = {
     openMenu: "Open menu",
     closeMenu: "Close menu",
     adminSection: "Admin",
+    adminRoleBadgeAria: "You are signed in as an administrator",
+    adminOnlyLinkAria: "Requires admin access",
   },
 
   actions: {
