@@ -26,6 +26,8 @@ const en = {
     openMenu: "Open menu",
     closeMenu: "Close menu",
     adminSection: "Admin",
+    adminRoleBadgeAria: "You are signed in as an administrator",
+    adminOnlyLinkAria: "Requires admin access",
   },
 
   actions: {
@@ -816,6 +818,13 @@ const en = {
     saveChanges: "Save Changes",
     nameRequired: "Name is required",
     parentEmailInvalid: "Enter a valid email address",
+  },
+
+  // ── Issue #108: Confirm Dialog ───────────────────────────────────────────────
+  confirmDialog: {
+    typeToConfirm: "Type",
+    typeToConfirmSuffix: "to confirm",
+    typingMatched: "Confirmed — you may proceed",
   },
 
   exportJob: {
