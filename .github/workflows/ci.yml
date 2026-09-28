@@ -162,6 +162,15 @@ jobs:
         run: cd frontend && npm ci
       - name: Build frontend (next build)
         run: cd frontend && npm run build
+      - name: Check bundle budgets
+        run: node scripts/bundle-budget.js
+      - name: Upload bundle manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-manifest
+          path: frontend/.next/build-manifest.json
+          retention-days: 14
 
   test:
     runs-on: ubuntu-latest
