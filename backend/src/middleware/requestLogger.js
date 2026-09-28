@@ -72,15 +72,20 @@ function generateRequestId() {
 function requestLogger() {
   return (req, res, next) => {
     const requestId = generateRequestId();
-    const correlationId = generateCorrelationId();
+    // Use the correlation ID already resolved by correlationIdMiddleware when
+    // it is mounted before this logger.  Fall back to generating one here so
+    // requestLogger continues to work correctly in isolation (e.g. unit tests
+    // that mount only this middleware).
+    const correlationId = req.correlationId || generateCorrelationId();
     const startedAt = Date.now();
 
     // Attach to req so downstream handlers can reference it (e.g. error logs)
     req.requestId = requestId;
-    req.correlationId = correlationId;
-
-    // Propagate correlation ID to the response so callers can trace end-to-end
-    res.setHeader('X-Correlation-ID', correlationId);
+    if (!req.correlationId) {
+      // Only set and reflect when correlationIdMiddleware has not already done so.
+      req.correlationId = correlationId;
+      res.setHeader('X-Correlation-ID', correlationId);
+    }
 
     const ip =
       (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
