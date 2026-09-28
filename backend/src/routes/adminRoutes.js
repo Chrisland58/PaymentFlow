@@ -31,6 +31,7 @@ const {
 } = require('../controllers/outboxAdminController');
 const { requireAdminAuth } = require('../middleware/auth');
 const { auditContext } = require('../middleware/auditContext');
+const { triggerRun, getDiscrepancies, reviewDiscrepancy } = require('../controllers/reconciliationAdminController');
 
 // POST /api/admin/log-level — change log level at runtime
 router.post('/log-level', requireAdminAuth, auditContext, setLogLevel);
@@ -66,5 +67,11 @@ router.get('/outbox/dead-letter/:eventId', requireAdminAuth, getDeadLetterEventD
 router.post('/outbox/dead-letter/:eventId/replay', requireAdminAuth, auditContext, replayDeadLetterEvent);
 router.delete('/outbox/dead-letter/:eventId', requireAdminAuth, auditContext, discardDeadLetterEvent);
 router.get('/outbox/stats', requireAdminAuth, getOutboxStats);
+
+// Provider reconciliation job — Issue #33
+// Trigger a bounded, idempotent reconciliation run and inspect discrepancy records.
+router.post('/reconciliation/run',  requireAdminAuth, auditContext, triggerRun);
+router.get('/reconciliation',       requireAdminAuth, getDiscrepancies);
+router.patch('/reconciliation/:id', requireAdminAuth, auditContext, reviewDiscrepancy);
 
 module.exports = router;
