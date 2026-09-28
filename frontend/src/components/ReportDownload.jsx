@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
-import { getReport, getReportCsvUrl } from "../services/api";
+import { getReport } from "../services/api";
+import { getReportCsvUrl } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
+import { getServerFilename } from "../utils/downloadBlob";
 import {
   IconCalendar, IconDownload, IconBarChart, IconAlertTriangle,
   IconCheck, IconTrendingUp, IconClock, IconX,
@@ -83,19 +85,31 @@ export default function ReportDownload() {
     if (studentId) params.studentId = studentId;
     if (paymentStatus) params.paymentStatus = paymentStatus;
 
+    // Clear any previous error before starting a new download.
+    setError("");
+
     try {
       setCsvLoading(true);
       const url = getReportCsvUrl(params);
       const response = await fetch(url, {
         credentials: "include",
+        headers: { format: "csv" },
       });
       if (!response.ok) throw new Error(t("reports.downloadError"));
       const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const filename =
+
+      // Prefer the server-supplied filename from Content-Disposition; fall
+      // back to a locally-derived name that includes the selected date range.
+      const fallbackFilename =
         startDate && endDate
           ? `report-${startDate}_to_${endDate}.csv`
           : "report-all-time.csv";
+      const filename = getServerFilename(response, fallbackFilename);
+
+      // Create a temporary anchor element to trigger the browser download
+      // dialogue.  The object URL is revoked immediately after the click so
+      // it does not linger in memory.
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
       a.download = filename;
@@ -104,6 +118,7 @@ export default function ReportDownload() {
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
     } catch (err) {
+      // Surface an actionable message and ensure no stale loading state remains.
       setError(t("reports.failedCsvPrefix") + (err.message || t("reports.failedCsvUnknown")));
     } finally {
       setCsvLoading(false);
@@ -138,7 +153,7 @@ export default function ReportDownload() {
         <div className="card-body">
           <form onSubmit={handleGenerate} style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-end" }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">{t("reports.startDate")}</label>
+              <label className="form-label">{t("reports.startDate") || "Start Date"}</label>
               <input
                 type="date"
                 className="form-input"
@@ -148,7 +163,7 @@ export default function ReportDownload() {
               />
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">{t("reports.endDate")}</label>
+              <label className="form-label">{t("reports.endDate") || "End Date"}</label>
               <input
                 type="date"
                 className="form-input"
@@ -196,7 +211,7 @@ export default function ReportDownload() {
               </select>
             </div>
             <button type="submit" disabled={loading} className="btn btn-primary" style={{ alignSelf: "flex-end" }}>
-              {loading ? t("reports.generating") : t("reports.generateReport")}
+              {loading ? "Generating..." : t("reports.generateReport")}
             </button>
             {(startDate || endDate || className || studentId || paymentStatus) && !loading && (
               <button
@@ -257,7 +272,7 @@ export default function ReportDownload() {
                   </>
                 ) : (
                   <>
-                    <IconDownload size={14} /> {t("reports.downloadCsv")}
+                    <IconDownload size={14} /> {t("reports.downloadCsv") || "Download CSV"}
                   </>
                 )}
               </button>

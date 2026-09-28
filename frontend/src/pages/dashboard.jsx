@@ -8,6 +8,7 @@ import SseDegradedBanner from "../components/SseDegradedBanner";
 import RequireAdmin from "../components/RequireAdmin";
 import BlockchainStatusBadge from "../components/BlockchainStatusBadge";
 import { TableDensityControl, useTableDensity } from "../components/TableDensityControl";
+import { SkeletonStatCard, SkeletonTableRow } from "../components/Skeleton";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
 import {
@@ -268,15 +269,7 @@ function Dashboard() {
           flex-shrink: 0;
         }
 
-        /* Skeleton pulse */
-        @keyframes skel-pulse {
-          0%,100% { opacity:1; } 50% { opacity:0.5; }
-        }
-        .skel-block {
-          border-radius: 4px;
-          background: var(--border);
-          animation: skel-pulse 1.4s ease-in-out infinite;
-        }
+        /* Skeleton pulse styles live in globals.css (issue #13). */
 
         /* ── Table density — Issue #113 ──────────────────── */
         .data-table[data-density='compact'] td,
@@ -391,11 +384,7 @@ function Dashboard() {
             <div className="stat-grid" style={{ marginBottom: "1.75rem" }}>
               {summaryLoading
                 ? Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="stat-card" aria-hidden="true">
-                      <div className="skel-block" style={{ width: 42, height: 42, borderRadius: 12, marginBottom: 16 }} />
-                      <div className="skel-block" style={{ width: "60%", height: 10, marginBottom: 12 }} />
-                      <div className="skel-block" style={{ width: "45%", height: 30 }} />
-                    </div>
+                    <SkeletonStatCard key={i} />
                   ))
                 : stats.map((s) => <StatCard key={s.label} {...s} />)
               }
@@ -522,14 +511,7 @@ function Dashboard() {
                   <tbody>
                     {studentsLoading ? (
                       Array.from({ length: 6 }).map((_, i) => (
-                        <tr key={i}>
-                          <td><div className="skel-block" style={{ height: 12, width: 72 }} /></td>
-                          <td><div className="skel-block" style={{ height: 12, width: 130 }} /></td>
-                          <td className="col-hide-sm"><div className="skel-block" style={{ height: 12, width: 44 }} /></td>
-                          <td className="col-hide-sm"><div className="skel-block" style={{ height: 12, width: 56 }} /></td>
-                          <td className="col-hide-xs"><div className="skel-block" style={{ height: 20, width: 52, borderRadius: 20 }} /></td>
-                          <td><div className="skel-block" style={{ height: 28, width: 42, borderRadius: 6 }} /></td>
-                        </tr>
+                        <SkeletonTableRow key={i} index={i} />
                       ))
                     ) : students.length === 0 ? (
                       <tr>
