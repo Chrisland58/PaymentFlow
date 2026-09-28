@@ -9,6 +9,7 @@ import RequireAdmin from "../components/RequireAdmin";
 import BlockchainStatusBadge from "../components/BlockchainStatusBadge";
 import { TableDensityControl, useTableDensity } from "../components/TableDensityControl";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
+import { useRouteChangeAbort } from "../hooks/useRouteChangeAbort";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
 import {
   IconUsers, IconCheck, IconAlertTriangle, IconDollarSign,
@@ -71,6 +72,10 @@ function Dashboard() {
     },
   });
 
+  // Issue #6 — abort page-level requests when the user navigates away.
+  // The returned signal is passed to fetchSummary / initial data loads below.
+  const { signal: routeSignal } = useRouteChangeAbort();
+
   const searchDebounceRef = useRef(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   // Holds the AbortController for the most-recent fetchStudents call so
@@ -86,11 +91,17 @@ function Dashboard() {
   const fetchSummary = useCallback(() => {
     setSummaryLoading(true);
     setSummaryError(null);
-    getPaymentSummary()
+    // Pass the route-change signal so navigation cancels the in-flight request
+    // without triggering an error toast (Issue #6).
+    getPaymentSummary({ signal: routeSignal })
       .then(({ data }) => setSummary(data))
-      .catch(() => setSummaryError(t("dashboard.failedToLoadSummary")))
+      .catch((err) => {
+        // Silently ignore requests cancelled by route change or AbortController.
+        if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
+        setSummaryError(t("dashboard.failedToLoadSummary"));
+      })
       .finally(() => setSummaryLoading(false));
-  }, [t]);
+  }, [t, routeSignal]);
 
   const fetchStudents = useCallback((p, srch, st, cls) => {
     // Cancel any in-flight student fetch before issuing a new one.
@@ -126,9 +137,14 @@ function Dashboard() {
   const isInitialPageRender = useRef(true);
 
   useEffect(() => {
-    getSyncStatus()
+    // Pass routeSignal so navigation cancels these page-level requests without
+    // triggering error toasts (Issue #6).
+    getSyncStatus({ signal: routeSignal })
       .then(({ data }) => setLastSyncAt(data.lastSyncAt))
-      .catch(() => setError(t("dashboard.failedToLoadSyncStatus")));
+      .catch((err) => {
+        if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
+        setError(t("dashboard.failedToLoadSyncStatus"));
+      });
     fetchSummary();
     loadSchoolClassOptions(getSchool, setClassOptions);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
