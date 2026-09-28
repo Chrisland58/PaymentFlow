@@ -47,6 +47,14 @@ function redirectToLogin() {
     // hard redirect below still ends the session from the app's perspective.
   }
 
+  // Issue #5 — give in-page listeners one tick to persist safe form-draft
+  // state to sessionStorage before we navigate away.
+  try {
+    window.dispatchEvent(new Event("session:expired"));
+  } catch {
+    // dispatchEvent unavailable (SSR / test env) — safe to ignore.
+  }
+
   const returnTo = encodeURIComponent(`${pathname}${search}`);
   window.location.href = `/login?returnTo=${returnTo}`;
 }

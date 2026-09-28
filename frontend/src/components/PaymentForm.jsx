@@ -3,8 +3,9 @@ import { QRCodeSVG } from "qrcode.react";
 import { useTranslation } from "react-i18next";
 import { generateStellarPaymentUri, availableMemoTypes } from "../utils/stellarUri";
 import { encodeMemo } from "../utils/stellarMemo";
-import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds } from "../services/api";
+import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds, getPaymentPlan } from "../services/api";
 import DisputeForm from "./DisputeForm";
+import { useSessionGuard } from "../hooks/useSessionGuard";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconCopy, IconCheck, IconAlertTriangle, IconSearch, IconDownload } from "./Icons";
 
@@ -73,6 +74,22 @@ export default function PaymentForm({ initialStudentId = "" }) {
   // Holds the AbortController for the in-flight lookup so a superseded request
   // can be cancelled before the next one starts (race-condition fix).
   const lookupAbortRef = useRef(null);
+
+  // Issue #5 — session guard: save the non-sensitive student ID draft when the
+  // session expires so it can be restored after re-authentication.
+  // Sensitive fields (walletAddress, memo, txHash, amounts) are never persisted.
+  const { saveDraft, restoreDraft } = useSessionGuard({
+    onSessionExpired: () => saveDraft({ studentId }),
+  });
+
+  // Restore a safe draft (studentId only) left from a previous session expiry.
+  // This runs once on mount, after which the draft is removed from storage.
+  useEffect(() => {
+    const draft = restoreDraft();
+    if (draft?.studentId && !initialStudentId?.trim()) {
+      setStudentId(draft.studentId);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleStudentIdChange(e) {
     const value = e.target.value;
