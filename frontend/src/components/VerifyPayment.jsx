@@ -4,6 +4,7 @@ import { verifyPayment } from "../services/api";
 import { parseStellarError } from "../utils/stellarErrors";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconAlertTriangle, IconCheck, IconExternalLink, IconShield } from "./Icons";
+import TimestampDisplay, { DISPLAY_MODE } from "./TimestampDisplay";
 
 const STATUS_BADGE = {
   valid:     { cls: "badge badge-success", key: "status.validation.valid" },
@@ -145,7 +146,9 @@ export default function VerifyPayment() {
             </InfoRow>
             <InfoRow label={t("verifyPayment.memoLabel")} mono>{result.memo}</InfoRow>
             <InfoRow label={t("verifyPayment.date")}>
-              {result.date ? new Date(result.date).toLocaleString() : "—"}
+              {result.date
+                ? <TimestampDisplay iso={result.date} mode={DISPLAY_MODE.UTC} />
+                : "—"}
             </InfoRow>
             {result.feeValidation?.message && (
               <InfoRow label={t("verifyPayment.note")}>

@@ -8,6 +8,7 @@ import {
 import PageHero from "../components/PageHero";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
+import TimestampDisplay, { DISPLAY_MODE } from "../components/TimestampDisplay";
 
 const STATUS_META = {
   open:         { cls: "badge-success", labelKey: "status.dispute.open" },
@@ -140,7 +141,11 @@ function DisputeCard({ dispute, expanded, onToggle, onResolved }) {
               <span style={{ fontWeight: 700, fontSize: "0.9375rem" }}>{dispute.studentId}</span>
               <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{t("disputes.byLabel", { name: dispute.raisedBy })}</span>
               <span style={{ fontSize: "0.75rem", color: "var(--text-subtle)" }}>
-                {new Date(dispute.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+                <TimestampDisplay
+                  iso={dispute.createdAt}
+                  mode={DISPLAY_MODE.UTC}
+                  dateOnly
+                />
               </span>
             </div>
             <div style={{ marginTop: "0.375rem", display: "flex", alignItems: "center", gap: "0.375rem" }}>

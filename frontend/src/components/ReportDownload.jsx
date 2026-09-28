@@ -7,6 +7,7 @@ import {
 } from "./Icons";
 import PageHero, { StatCard } from "./PageHero";
 import { useTranslation } from "react-i18next";
+import { formatTimestamp, DISPLAY_MODE } from "../utils/dateTime";
 
 export default function ReportDownload() {
   const { t } = useTranslation();
@@ -234,7 +235,7 @@ export default function ReportDownload() {
               {t("reports.period")} <strong>{report.period.startDate || t("reports.allTime")}</strong>
               {" → "}
               <strong>{report.period.endDate || t("reports.allTime")}</strong>
-              &nbsp;·&nbsp;{t("reports.generatedAt", { date: new Date(report.generatedAt).toLocaleString() })}
+              &nbsp;·&nbsp;{t("reports.generatedAt", { date: (() => { const r = formatTimestamp(report.generatedAt, { mode: DISPLAY_MODE.UTC }); return r.label ? `${r.formatted} ${r.label}` : r.formatted; })() })}
             </p>
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
               <button
@@ -293,7 +294,7 @@ export default function ReportDownload() {
                     {reportHistory.map(entry => (
                       <tr key={entry.id}>
                         <td style={{ whiteSpace: "nowrap" }}>
-                          {new Date(entry.timestamp).toLocaleString()}
+                          {(() => { const r = formatTimestamp(entry.timestamp, { mode: DISPLAY_MODE.UTC }); return r.label ? `${r.formatted} ${r.label}` : r.formatted; })()}
                         </td>
                         <td>{entry.summary.totalAmount} XLM</td>
                         <td>{entry.summary.paymentCount}</td>
