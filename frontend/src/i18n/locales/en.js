@@ -72,7 +72,17 @@ const en = {
     minutesAgo: "{{mins}}m ago",
     hoursAgo: "{{hrs}}h ago",
     daysAgo: "{{days}}d ago",
-    pageOf: "Page {{page}} of {{total}}",
+    pageOf: "{{page}} / {{total}}",
+  },
+
+  pagination: {
+    rangeOf: "{{start}}–{{end}} of {{total}}",
+    noResults: "No results",
+    rowsPerPage: "Rows per page",
+    rowsPerPageAria: "Rows per page",
+    navAria: "Pagination",
+    firstPage: "First page",
+    lastPage: "Last page",
   },
 
   status: {
