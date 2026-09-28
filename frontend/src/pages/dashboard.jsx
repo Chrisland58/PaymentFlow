@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import SyncButton from "../components/SyncButton";
 import ErrorBoundary from "../components/ErrorBoundary";
+import ErrorAlert from "../components/ErrorAlert";
 import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
 import SseDegradedBanner from "../components/SseDegradedBanner";
@@ -9,6 +10,7 @@ import RequireAdmin from "../components/RequireAdmin";
 import BlockchainStatusBadge from "../components/BlockchainStatusBadge";
 import { TableDensityControl, useTableDensity } from "../components/TableDensityControl";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
+import { useRetry } from "../hooks/useRetry";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
 import {
   IconUsers, IconCheck, IconAlertTriangle, IconDollarSign,
@@ -39,11 +41,7 @@ function Dashboard() {
   const [lastSyncAt, setLastSyncAt]           = useState(null);
   const [syncMsg, setSyncMsg]                 = useState(null);
   const [summary, setSummary]                 = useState(null);
-  const [summaryLoading, setSummaryLoading]   = useState(true);
-  const [summaryError, setSummaryError]       = useState(null);
   const [students, setStudents]               = useState([]);
-  const [studentsLoading, setStudentsLoading] = useState(true);
-  const [studentsError, setStudentsError]     = useState(null);
   const [page, setPage]                       = useState(1);
   const [pages, setPages]                     = useState(1);
   const [total, setTotal]                     = useState(0);
@@ -60,6 +58,57 @@ function Dashboard() {
   // Set of student IDs whose detail row is currently expanded — Issue #113
   const [expandedRows, setExpandedRows] = useState(new Set());
 
+  const searchDebounceRef = useRef(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  // Holds the AbortController for the most-recent fetchStudents call so
+  // superseded (stale) requests can be cancelled before the next one starts.
+  const studentsAbortRef = useRef(null);
+
+  // ── useRetry instances ─────────────────────────────────────────────────────
+  //
+  // Each retry hook wraps a mutable ref-backed fn so execute() always calls
+  // the most recent closure (with up-to-date filter values / AbortController).
+  // useRetry manages its own `loading` field inside retryState, so there is no
+  // separate summaryLoading / studentsLoading state to keep in sync.
+
+  const summaryFnRef  = useRef(() => Promise.resolve());
+  const studentsFnRef = useRef(() => Promise.resolve());
+
+  const summaryRetry  = useRetry(() => summaryFnRef.current());
+  const studentsRetry = useRetry(() => studentsFnRef.current());
+
+  // ── Fetch helpers ──────────────────────────────────────────────────────────
+  //
+  // Each helper updates the ref-backed fn with a fresh closure over the current
+  // args, resets the retry counter (new filter = new fetch), then calls execute()
+  // once.  execute() itself calls the fn via the ref, so scroll position and
+  // filters are preserved across retries (the closure already captures them).
+
+  const fetchSummary = useCallback(() => {
+    summaryFnRef.current = () =>
+      getPaymentSummary().then(({ data }) => setSummary(data));
+    summaryRetry.reset();
+    summaryRetry.execute();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchStudents = useCallback((p, srch, st, cls) => {
+    // Cancel any in-flight student fetch before issuing a new one.
+    studentsAbortRef.current?.abort();
+    const controller = new AbortController();
+    studentsAbortRef.current = controller;
+
+    studentsFnRef.current = () =>
+      getStudents(p, PAGE_SIZE, { search: srch, status: st, className: cls }, { signal: controller.signal })
+        .then(({ data }) => {
+          setStudents(data.students);
+          setPages(data.pages || 1);
+          setTotal(data.total || 0);
+        });
+
+    studentsRetry.reset();
+    studentsRetry.execute();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Real-time SSE — surfaces degraded/reconnecting/failed state (Issues #1054, #1078).
   const { degraded, connectionStatus } = usePaymentEvents({
     onEvent: (type) => {
@@ -71,53 +120,11 @@ function Dashboard() {
     },
   });
 
-  const searchDebounceRef = useRef(null);
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  // Holds the AbortController for the most-recent fetchStudents call so
-  // superseded (stale) requests can be cancelled before the next one starts.
-  const studentsAbortRef = useRef(null);
-
   useEffect(() => {
     clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(searchDebounceRef.current);
   }, [search]);
-
-  const fetchSummary = useCallback(() => {
-    setSummaryLoading(true);
-    setSummaryError(null);
-    getPaymentSummary()
-      .then(({ data }) => setSummary(data))
-      .catch(() => setSummaryError(t("dashboard.failedToLoadSummary")))
-      .finally(() => setSummaryLoading(false));
-  }, [t]);
-
-  const fetchStudents = useCallback((p, srch, st, cls) => {
-    // Cancel any in-flight student fetch before issuing a new one.
-    studentsAbortRef.current?.abort();
-    const controller = new AbortController();
-    studentsAbortRef.current = controller;
-
-    setStudentsLoading(true);
-    setStudentsError(null);
-    getStudents(p, PAGE_SIZE, { search: srch, status: st, className: cls }, { signal: controller.signal })
-      .then(({ data }) => {
-        setStudents(data.students);
-        setPages(data.pages || 1);
-        setTotal(data.total || 0);
-      })
-      .catch((err) => {
-        // Silently ignore aborted (superseded) requests.
-        if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
-        setStudentsError(t("dashboard.failedToLoadStudents"));
-      })
-      .finally(() => {
-        // Only clear loading when this controller is still the current one.
-        if (studentsAbortRef.current === controller) {
-          setStudentsLoading(false);
-        }
-      });
-  }, [t]);
 
   // Tracks whether the page effect is running for the very first time.
   // On mount the filter effect already calls fetchStudents(1, …), so the page
@@ -344,11 +351,11 @@ function Dashboard() {
 
       {/* Accessibility live regions */}
       <div aria-live="polite" aria-atomic="true" className="sr-only">
-        {summaryLoading || studentsLoading ? t("dashboard.loadingAria") : t("dashboard.loadedAria")}
+        {summaryRetry.retryState.loading || studentsRetry.retryState.loading ? t("dashboard.loadingAria") : t("dashboard.loadedAria")}
       </div>
-      {(summaryError || studentsError) && (
+      {(summaryRetry.retryState.error || studentsRetry.retryState.error) && (
         <div aria-live="assertive" aria-atomic="true" className="sr-only">
-          {summaryError || studentsError}
+          {summaryRetry.retryState.error || studentsRetry.retryState.error}
         </div>
       )}
 
@@ -382,14 +389,16 @@ function Dashboard() {
 
         {/* ── Stat Cards ────────────────────────────── */}
         <ErrorBoundary>
-          {summaryError ? (
-            <div role="alert" className="alert alert-danger" style={{ marginBottom: "1.5rem" }}>
-              <span style={{ flex: 1 }}>{summaryError}</span>
-              <button onClick={fetchSummary} className="btn btn-sm btn-ghost" style={{ color: "inherit", borderColor: "currentColor", opacity: 0.8 }}>{t("actions.retry")}</button>
-            </div>
+          {summaryRetry.retryState.error ? (
+            <ErrorAlert
+              retryState={summaryRetry.retryState}
+              onRetry={summaryRetry.execute}
+              loading={summaryRetry.retryState.loading}
+              style={{ marginBottom: "1.5rem" }}
+            />
           ) : (
             <div className="stat-grid" style={{ marginBottom: "1.75rem" }}>
-              {summaryLoading
+              {summaryRetry.retryState.loading
                 ? Array.from({ length: 4 }).map((_, i) => (
                     <div key={i} className="stat-card" aria-hidden="true">
                       <div className="skel-block" style={{ width: 42, height: 42, borderRadius: 12, marginBottom: 16 }} />
@@ -408,7 +417,7 @@ function Dashboard() {
           <div className="card-header">
             <div>
               <div className="card-title">{t("dashboard.studentsTitle")}</div>
-              {!studentsLoading && total > 0 && (
+              {!studentsRetry.retryState.loading && total > 0 && (
                 <div className="card-subtitle">{t("dashboard.studentsTotal", { count: total })}</div>
               )}
             </div>
@@ -489,25 +498,20 @@ function Dashboard() {
 
           {/* Table */}
           <ErrorBoundary>
-            {studentsError ? (
+            {studentsRetry.retryState.error ? (
               <div className="card-body">
-                <div role="alert" className="alert alert-danger">
-                  <span style={{ flex: 1 }}>{studentsError}</span>
-                  <button
-                    onClick={() => fetchStudents(page, debouncedSearch, statusFilter, classFilter)}
-                    className="btn btn-sm btn-ghost"
-                    style={{ color: "inherit", borderColor: "currentColor", opacity: 0.8 }}
-                  >
-                    {t("actions.retry")}
-                  </button>
-                </div>
+                <ErrorAlert
+                  retryState={studentsRetry.retryState}
+                  onRetry={studentsRetry.execute}
+                  loading={studentsRetry.retryState.loading}
+                />
               </div>
             ) : (
-              <div style={{ overflowX: "auto" }} aria-busy={studentsLoading} aria-label={t("dashboard.studentTableAria")}>
+              <div style={{ overflowX: "auto" }} aria-busy={studentsRetry.retryState.loading} aria-label={t("dashboard.studentTableAria")}>
                 <table
                   className="data-table"
                   data-density={density}
-                  aria-label={studentsLoading ? t("dashboard.studentsLoadingAria") : t("dashboard.studentTableAria")}
+                  aria-label={studentsRetry.retryState.loading ? t("dashboard.studentsLoadingAria") : t("dashboard.studentTableAria")}
                 >
                   <thead>
                     <tr>
@@ -520,7 +524,7 @@ function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {studentsLoading ? (
+                    {studentsRetry.retryState.loading ? (
                       Array.from({ length: 6 }).map((_, i) => (
                         <tr key={i}>
                           <td><div className="skel-block" style={{ height: 12, width: 72 }} /></td>
@@ -632,12 +636,12 @@ function Dashboard() {
           {total > 0 && (
             <div style={{ padding: "0.875rem 1.25rem", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
               <span className="pagination-info" aria-live="polite" aria-atomic="true">
-                {studentsLoading ? t("actions.loading") : t("dashboard.rangeOf", { start: rangeStart, end: rangeEnd, total: total.toLocaleString() })}
+                {studentsRetry.retryState.loading ? t("actions.loading") : t("dashboard.rangeOf", { start: rangeStart, end: rangeEnd, total: total.toLocaleString() })}
               </span>
               <nav className="pagination-controls" aria-label={t("dashboard.paginationAria")}>
                 <button
                   className="page-btn"
-                  disabled={page === 1 || studentsLoading}
+                  disabled={page === 1 || studentsRetry.retryState.loading}
                   onClick={() => setPage(p => p - 1)}
                   aria-label={t("actions.previousPage")}
                   style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
@@ -649,7 +653,7 @@ function Dashboard() {
                 </span>
                 <button
                   className="page-btn"
-                  disabled={page === pages || studentsLoading}
+                  disabled={page === pages || studentsRetry.retryState.loading}
                   onClick={() => setPage(p => p + 1)}
                   aria-label={t("actions.nextPage")}
                   style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}

@@ -758,6 +758,13 @@ const en = {
     explorerAriaLabel: 'View transaction {{hash}} on Stellar Explorer (opens in new tab)',
   },
 
+  errorAlert: {
+    permanentLabel: "Permanent error",
+    attemptsCount: "Attempt {{attempts}} of {{max}}",
+    retryAria: "Retry the failed request",
+    dismissAria: "Dismiss error",
+  },
+
   errorBoundary: {
     title: "Something went wrong",
     body: "An unexpected error occurred. You can try reloading the page or go back to safety.",

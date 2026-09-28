@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { getDisputes, resolveDispute } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
+import { isRetryable } from "../utils/retryClassification";
 import {
   IconAlertTriangle, IconExternalLink,
   IconChevronLeft, IconChevronRight, IconSearch,
 } from "../components/Icons";
+import ErrorAlert from "../components/ErrorAlert";
 import PageHero from "../components/PageHero";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
+import { MAX_RETRY_ATTEMPTS } from "../hooks/useRetry";
 
 const STATUS_META = {
   open:         { cls: "badge-success", labelKey: "status.dispute.open" },
@@ -195,6 +198,8 @@ function DisputesContent() {
   const [disputes, setDisputes]       = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
+  const [errorRetryable, setErrorRetryable] = useState(false);
+  const [retryAttempts, setRetryAttempts]   = useState(0);
   const [page, setPage]               = useState(1);
   const [totalPages, setTotalPages]   = useState(1);
   const [totalCount, setTotalCount]   = useState(0);
@@ -205,25 +210,38 @@ function DisputesContent() {
 
   // Auth is cookie-based; the axios interceptor in api.js handles 401 → /login redirect.
 
-  const fetchDisputes = useCallback(async (p = page) => {
+  const fetchDisputes = useCallback(async (p = page, resetRetry = false) => {
     setLoading(true);
     setError(null);
+    setErrorRetryable(false);
+    if (resetRetry) setRetryAttempts(0);
     try {
       const params = { page: p, limit: 20 };
       if (statusFilter) params.status = statusFilter;
       if (studentFilter.trim()) params.studentId = studentFilter.trim();
       const res = await getDisputes(params);
+      // Success — clear any prior error and reset counter.
+      setRetryAttempts(0);
       setDisputes(res.data.disputes || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
       setTotalCount(res.data.pagination?.total || 0);
     } catch (err) {
-      setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("disputes.failedToLoad"));
+      setRetryAttempts(prev => {
+        const nextAttempts = prev + 1;
+        const canRetry = isRetryable(err) && nextAttempts < MAX_RETRY_ATTEMPTS;
+        const msg = nextAttempts >= MAX_RETRY_ATTEMPTS
+          ? getErrorMessage("MAX_RETRIES_EXCEEDED")
+          : (getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("disputes.failedToLoad"));
+        setError(msg);
+        setErrorRetryable(canRetry);
+        return nextAttempts;
+      });
     } finally {
       setLoading(false);
     }
   }, [page, statusFilter, studentFilter, t]);
 
-  useEffect(() => { fetchDisputes(page); }, [page, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchDisputes(page, true); }, [page, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleResolved(updated) {
     setDisputes(prev => prev.map(d => d._id === updated._id ? updated : d));
@@ -298,10 +316,17 @@ function DisputesContent() {
 
         {/* Error */}
         {error && (
-          <div role="alert" className="alert alert-danger" style={{ marginBottom: "1rem" }}>
-            <IconAlertTriangle size={16} />
-            <span>{error}</span>
-          </div>
+          <ErrorAlert
+            retryState={{
+              error,
+              isRetryable: errorRetryable,
+              attempts: retryAttempts,
+              exhausted: retryAttempts >= MAX_RETRY_ATTEMPTS,
+              loading,
+            }}
+            onRetry={() => fetchDisputes(page, false)}
+            style={{ marginBottom: "1rem" }}
+          />
         )}
 
         {/* List */}

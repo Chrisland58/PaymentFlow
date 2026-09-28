@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
 import { getAuditLogs } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
+import { isRetryable } from "../utils/retryClassification";
 import {
   IconChevronLeft, IconChevronRight, IconAlertTriangle, IconCheck,
 } from "../components/Icons";
+import ErrorAlert from "../components/ErrorAlert";
 import PageHero from "../components/PageHero";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
+import { MAX_RETRY_ATTEMPTS } from "../hooks/useRetry";
 
 function formatTimestamp(isoString, t) {
   if (!isoString) return t("auditLogs.notAvailable");
@@ -42,6 +45,8 @@ function AuditLogsContent() {
   const [logs, setLogs]               = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
+  const [errorRetryable, setErrorRetryable] = useState(false);
+  const [retryAttempts, setRetryAttempts]   = useState(0);
   const [total, setTotal]             = useState(0);
   const [nextCursor, setNextCursor]   = useState(null);
   const [cursorStack, setCursorStack] = useState([]); // Stack of previous cursors for back button
@@ -68,7 +73,7 @@ function AuditLogsContent() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const fetchLogs = (cursor = null) => {
+  const fetchLogs = (cursor = null, resetRetry = false) => {
     const isLoadMore = cursor !== null && cursor !== undefined;
     if (isLoadMore) {
       setLoadingMore(true);
@@ -76,6 +81,8 @@ function AuditLogsContent() {
       setLoading(true);
       setLogs([]);
       setCursorStack([]);
+      // New filter request always resets the retry counter.
+      if (resetRetry) setRetryAttempts(0);
     }
     setError(null);
     const params = { limit: 50 };
@@ -93,6 +100,10 @@ function AuditLogsContent() {
     }
     getAuditLogs(params)
       .then(({ data }) => {
+        // Success — clear any previous error and reset attempt counter.
+        setError(null);
+        setErrorRetryable(false);
+        setRetryAttempts(0);
         if (isLoadMore) {
           setLogs(prev => [...prev, ...data.data]);
           setCursorStack(prev => [...prev, cursor]);
@@ -103,7 +114,16 @@ function AuditLogsContent() {
         setNextCursor(data.nextCursor);
       })
       .catch((err) => {
-        setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("auditLogs.failedToLoad"));
+        setRetryAttempts(prev => {
+          const nextAttempts = prev + 1;
+          const canRetry = isRetryable(err) && nextAttempts < MAX_RETRY_ATTEMPTS;
+          const msg = nextAttempts >= MAX_RETRY_ATTEMPTS
+            ? getErrorMessage("MAX_RETRIES_EXCEEDED")
+            : (getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("auditLogs.failedToLoad"));
+          setError(msg);
+          setErrorRetryable(canRetry);
+          return nextAttempts;
+        });
       })
       .finally(() => {
         if (isLoadMore) {
@@ -114,7 +134,7 @@ function AuditLogsContent() {
       });
   };
 
-  useEffect(() => { fetchLogs(1); }, [actionFilter, targetTypeFilter, resultFilter, actorIdFilter, searchFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchLogs(1, true); }, [actionFilter, targetTypeFilter, resultFilter, actorIdFilter, searchFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -307,10 +327,16 @@ function AuditLogsContent() {
           {/* Alerts */}
           {error && (
             <div className="card-body">
-              <div role="alert" className="alert alert-danger">
-                <IconAlertTriangle size={16} />
-                <span>{error}</span>
-              </div>
+              <ErrorAlert
+                retryState={{
+                  error,
+                  isRetryable: errorRetryable,
+                  attempts: retryAttempts,
+                  exhausted: retryAttempts >= MAX_RETRY_ATTEMPTS,
+                  loading: false,
+                }}
+                onRetry={() => fetchLogs(null, false)}
+              />
             </div>
           )}
 
