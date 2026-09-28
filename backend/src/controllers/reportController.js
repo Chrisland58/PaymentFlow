@@ -51,6 +51,7 @@ async function getReport(req, res, next) {
         status: REPORT_STATUSES.PENDING,
         message: 'Report generation started. Poll /api/reports/jobs/{jobId} for status.',
         statusUrl: job.reportJob.statusUrl,
+        deduplicated: job.deduplicated || false,
       });
     }
 
@@ -139,16 +140,26 @@ async function getReportJob(req, res, next) {
       return res.status(404).json({ error: 'Report job not found' });
     }
 
+    // If the job artifact has expired (TTL index may not have cleaned it yet),
+    // reflect the expired state in the response.
+    const isExpired = job.expiresAt && job.expiresAt < new Date();
+    const effectiveStatus = isExpired && job.status === REPORT_STATUSES.COMPLETED
+      ? REPORT_STATUSES.EXPIRED
+      : job.status;
+
     res.json({
       jobId: job.jobId,
       type: job.type,
-      status: job.status,
+      status: effectiveStatus,
       params: job.params,
       error: job.result?.error || null,
       createdAt: job.createdAt,
       startedAt: job.startedAt,
       completedAt: job.completedAt,
-      downloadUrl: job.status === REPORT_STATUSES.COMPLETED ? `/api/reports/jobs/${jobId}/download` : null,
+      expiresAt: job.expiresAt,
+      downloadUrl: job.status === REPORT_STATUSES.COMPLETED && !isExpired
+        ? `/api/reports/jobs/${jobId}/download`
+        : null,
     });
   } catch (err) { next(err); }
 }
@@ -161,6 +172,15 @@ async function downloadReportJob(req, res, next) {
 
     if (!job) {
       return res.status(404).json({ error: 'Report job not found' });
+    }
+
+    // Expired artifacts are inaccessible — return 410 Gone.
+    if (job.expiresAt && job.expiresAt < new Date()) {
+      return res.status(410).json({
+        error: 'Report artifact has expired',
+        code: 'REPORT_EXPIRED',
+        jobId,
+      });
     }
 
     if (job.status !== REPORT_STATUSES.COMPLETED) {
