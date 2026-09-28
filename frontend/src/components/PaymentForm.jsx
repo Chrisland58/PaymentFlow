@@ -3,8 +3,10 @@ import { QRCodeSVG } from "qrcode.react";
 import { useTranslation } from "react-i18next";
 import { generateStellarPaymentUri, availableMemoTypes } from "../utils/stellarUri";
 import { encodeMemo } from "../utils/stellarMemo";
-import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds } from "../services/api";
+import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds, getPaymentPlan } from "../services/api";
 import DisputeForm from "./DisputeForm";
+import VirtualTransactionList from "./VirtualTransactionList";
+import { useSessionGuard } from "../hooks/useSessionGuard";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconCopy, IconCheck, IconAlertTriangle, IconSearch, IconDownload } from "./Icons";
 
@@ -61,7 +63,6 @@ export default function PaymentForm({ initialStudentId = "" }) {
   const [copied, setCopied]                   = useState(null);
   const [hasDeletedPayments, setHasDeletedPayments] = useState(false);
   const [balanceError, setBalanceError]         = useState(false);
-  const [disputingTx, setDisputingTx]           = useState(null);
   const [disputedTxs, setDisputedTxs]         = useState(new Set());
   const [refunds, setRefunds]                 = useState({}); // txHash -> refund
   // #1118 — wallets that cannot send free-text memos can switch the QR code to
@@ -73,6 +74,22 @@ export default function PaymentForm({ initialStudentId = "" }) {
   // Holds the AbortController for the in-flight lookup so a superseded request
   // can be cancelled before the next one starts (race-condition fix).
   const lookupAbortRef = useRef(null);
+
+  // Issue #5 — session guard: save the non-sensitive student ID draft when the
+  // session expires so it can be restored after re-authentication.
+  // Sensitive fields (walletAddress, memo, txHash, amounts) are never persisted.
+  const { saveDraft, restoreDraft } = useSessionGuard({
+    onSessionExpired: () => saveDraft({ studentId }),
+  });
+
+  // Restore a safe draft (studentId only) left from a previous session expiry.
+  // This runs once on mount, after which the draft is removed from storage.
+  useEffect(() => {
+    const draft = restoreDraft();
+    if (draft?.studentId && !initialStudentId?.trim()) {
+      setStudentId(draft.studentId);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleStudentIdChange(e) {
     const value = e.target.value;
@@ -489,96 +506,20 @@ export default function PaymentForm({ initialStudentId = "" }) {
             </div>
           )}
 
-          {/* Payment History */}
+          {/* Payment History — virtualized via react-window (Issue #7) */}
           {(payments !== null || paymentsLoading) && (
             <div style={{ marginTop: "1.75rem" }}>
               <div style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--text)", marginBottom: "0.875rem", paddingBottom: "0.625rem", borderBottom: "1px solid var(--border)" }}>
                 {t("paymentForm.paymentHistory")}
               </div>
-              {paymentsLoading ? (
-                Array.from({ length: 2 }).map((_, i) => (
-                  <div key={i} className="pf-payment-item">
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-                      <div className="skeleton" style={{ height: 14, width: 80 }} />
-                      <div className="skeleton" style={{ height: 20, width: 60, borderRadius: 20 }} />
-                    </div>
-                    <div className="skeleton" style={{ height: 10, width: "100%" }} />
-                  </div>
-                ))
-              ) : payments.length === 0 ? (
-                <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{t("paymentForm.noPayments")}</p>
-              ) : payments.map((p, i) => {
-                const st = p.feeValidationStatus || "unknown";
-                const badge = STATUS_BADGE[st] || STATUS_BADGE.unknown;
-                const canDispute = st === "valid" || st === "overpaid";
-                const alreadyDisputed = disputedTxs.has(p.txHash);
-                const refund = refunds[p.txHash];
-                const refundStatusStyles = {
-                  approval_pending: { cls: "badge badge-warning" },
-                  pending: { cls: "badge badge-info" },
-                  submitted: { cls: "badge badge-primary" },
-                  confirmed: { cls: "badge badge-success" },
-                  failed: { cls: "badge badge-danger" },
-                };
-                return (
-                  <div key={p.txHash || i} className="pf-payment-item">
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.4rem", flexWrap: "wrap", gap: "0.5rem" }}>
-                      <strong style={{ fontSize: "0.9rem" }}>
-                        {p.amount}{" "}
-                        <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)" }}>
-                          {p.assetCode || "XLM"}
-                        </span>
-                      </strong>
-                      <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
-                          <span className={badge.cls}>{t(badge.key)}</span>
-                          {refund && (
-                            <span className={refundStatusStyles[refund.status]?.cls || "badge badge-neutral"}>
-                              {refundStatusStyles[refund.status]
-                                ? `${t("status.refund.prefix")} ${t(`status.refund.${refund.status}`)}`
-                                : `${t("status.refund.prefix")} ${refund.status}`}
-                            </span>
-                          )}
-                        </div>
-                    </div>
-                    <div style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.25rem", wordBreak: "break-all" }}>
-                      {p.txHash}
-                    </div>
-                    {p.confirmedAt && (
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-subtle)" }}>
-                        {new Date(p.confirmedAt).toLocaleString()}
-                      </div>
-                    )}
-
-                    {canDispute && (
-                      <div style={{ marginTop: "0.625rem" }}>
-                        {alreadyDisputed ? (
-                          <span className="badge badge-warning">{t("paymentForm.disputeSubmitted")}</span>
-                        ) : disputingTx === p.txHash ? (
-                          <div style={{ marginTop: "0.5rem" }}>
-                            <DisputeForm
-                              txHash={p.txHash}
-                              studentId={studentId}
-                              onSuccess={() => {
-                                setDisputedTxs(prev => new Set([...prev, p.txHash]));
-                                setDisputingTx(null);
-                              }}
-                              onCancel={() => setDisputingTx(null)}
-                            />
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setDisputingTx(p.txHash)}
-                            className="btn btn-sm btn-ghost"
-                            style={{ marginTop: "0.25rem" }}
-                          >
-                            {t("paymentForm.raiseDispute")}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              <VirtualTransactionList
+                payments={payments}
+                paymentsLoading={paymentsLoading}
+                studentId={studentId}
+                disputedTxs={disputedTxs}
+                refunds={refunds}
+                onDisputedTxsChange={setDisputedTxs}
+              />
             </div>
           )}
         </div>

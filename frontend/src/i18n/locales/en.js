@@ -268,6 +268,12 @@ const en = {
     noPayments: "No payments recorded yet.",
     raiseDispute: "Raise Dispute",
     disputeSubmitted: "Dispute submitted",
+    sortBy: "Sort by:",
+    colDate: "Date",
+    colAmount: "Amount",
+    colStatus: "Status",
+    txCount: "{{count}} transaction(s)",
+    txRowAria: "{{amount}} {{asset}}, status: {{status}}",
   },
 
   verifyPayment: {
