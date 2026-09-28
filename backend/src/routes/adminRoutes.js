@@ -29,6 +29,10 @@ const {
   discardDeadLetterEvent,
   getOutboxStats,
 } = require('../controllers/outboxAdminController');
+const {
+  runRetentionHandler,
+  previewRetentionHandler,
+} = require('../controllers/retentionController');
 const { requireAdminAuth } = require('../middleware/auth');
 const { auditContext } = require('../middleware/auditContext');
 
@@ -66,5 +70,11 @@ router.get('/outbox/dead-letter/:eventId', requireAdminAuth, getDeadLetterEventD
 router.post('/outbox/dead-letter/:eventId/replay', requireAdminAuth, auditContext, replayDeadLetterEvent);
 router.delete('/outbox/dead-letter/:eventId', requireAdminAuth, auditContext, discardDeadLetterEvent);
 router.get('/outbox/stats', requireAdminAuth, getOutboxStats);
+
+// Retention policy admin endpoints
+// GET  /api/admin/retention/preview — dry-run over all scopes (safe, read-only)
+// POST /api/admin/retention/run     — run with { dryRun, scopes } body
+router.get('/retention/preview', requireAdminAuth, previewRetentionHandler);
+router.post('/retention/run', requireAdminAuth, auditContext, runRetentionHandler);
 
 module.exports = router;
