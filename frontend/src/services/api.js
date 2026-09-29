@@ -144,3 +144,10 @@ export const updateInstallment = (studentId, installmentIndex, data) =>
   api.patch(`/payment-plans/${studentId}/installment/${installmentIndex}`, data);
 export const cancelPaymentPlan = (studentId) =>
   api.delete(`/payment-plans/${studentId}`);
+
+// MFA
+export const setupUserMfa        = ()       => api.post("/auth/mfa/setup");
+export const verifyUserMfa       = (data)   => api.post("/auth/mfa/verify", data);
+export const disableUserMfa      = ()       => api.post("/auth/mfa/disable");
+export const getMfaBackupCodes   = ()       => api.get("/auth/mfa/backup-codes");
+export const regenerateBackupCodes = ()     => api.post("/auth/mfa/backup-codes/regenerate");

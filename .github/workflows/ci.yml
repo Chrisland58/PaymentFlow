@@ -279,6 +279,14 @@ jobs:
       - name: Frontend coverage
         run: npm run coverage:frontend
 
+      - name: Print risk-area coverage summary
+        if: always()
+        run: |
+          echo "=== Risk-area coverage summary (Issue #100) ==="
+          npm run coverage -- --coverageReporters=text --silent 2>/dev/null | \
+            grep -E "(All files|services|middleware|controllers|stellarService|authController|webhookService|reconciliation|paymentController|paymentConfirmation)" || true
+          echo "================================================"
+
       - name: Upload backend coverage
         if: always()
         uses: actions/upload-artifact@v4

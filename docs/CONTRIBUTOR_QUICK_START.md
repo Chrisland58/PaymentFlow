@@ -1,18 +1,15 @@
 # Contributor Quick Start
 
-This guide takes a new contributor from a clean clone to a running PaymentFlow frontend and backend.
+This is the shortest supported path from a fresh clone to a running PaymentFlow development environment. The application uses Node.js 20, MongoDB 7 as a single-node replica set, Redis 7, an Express backend, and a Next.js frontend.
 
 ## Prerequisites
 
-Install:
-
 - Git
-- Node.js 20.11.0 from `.nvmrc`
-- npm
+- Node.js 20.11.0 (see `.nvmrc`) and npm
 - Docker Engine with Docker Compose v2
 - `curl` and `openssl`
 
-Check the toolchain:
+Check the versions before starting:
 
 ```bash
 node --version
@@ -20,7 +17,7 @@ npm --version
 docker compose version
 ```
 
-## Clone And Install
+## Clone and Install
 
 ```bash
 git clone https://github.com/onlyonee1/PaymentFlow.git
@@ -31,11 +28,11 @@ npm ci
 (cd frontend && npm ci)
 ```
 
-The root install provides repository-wide tests. The backend and frontend installs provide their package-local tests, linting, and development commands.
+The root dependencies support the repository-wide tests. The backend and frontend installs support their package-local tests, linting, and development commands.
 
-## Configure Environment
+## Configure Local Environment
 
-Create local files from the checked-in templates:
+Create the three local environment files. They are ignored by Git and must not be committed.
 
 ```bash
 cp .env.example .env
@@ -43,28 +40,30 @@ cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 ```
 
-Use the [environment variable reference](environment-reference.md) for defaults, sensitivity, ownership, rotation, and scope.
+Edit the files and replace placeholder secrets with local-only values:
 
-For the default Docker workflow, edit the root `.env` and set local-only values for `MONGO_ROOT_PASSWORD`, `JWT_SECRET`, and `ADMIN_PASSWORD`. Keep `MONGO_ROOT_USERNAME=root`. Generate values without printing them to logs:
+- `.env`: set `MONGO_ROOT_PASSWORD`, `JWT_SECRET`, and `ADMIN_PASSWORD`. `MONGO_ROOT_USERNAME=root` is suitable for local Docker.
+- `backend/.env`: set `MONGO_URI=mongodb://localhost:27017/stellaredupay`, a generated `JWT_SECRET`, and `REDIS_HOST=localhost` if running the backend outside Docker.
+- `frontend/.env.local`: keep `NEXT_PUBLIC_API_URL=/api` for the same-origin Next.js proxy and `NEXT_PUBLIC_STELLAR_NETWORK=testnet`.
+
+Generate values without printing them to a log:
 
 ```bash
 openssl rand -hex 32
 openssl rand -base64 32
 ```
 
-For host-run backend commands, set `MONGO_URI=mongodb://localhost:27017/stellaredupay`, the same local `JWT_SECRET`, and `REDIS_HOST=localhost` in `backend/.env`. Keep `NEXT_PUBLIC_API_URL=/api` and `NEXT_PUBLIC_STELLAR_NETWORK=testnet` in `frontend/.env.local` so Next.js proxies browser API calls to the backend.
+The root `.env` is used by Docker Compose. The backend file is used by backend scripts and host-run processes; keep their secrets consistent when switching between modes. `SCHOOL_WALLET_ADDRESS` is optional for startup. A valid Stellar testnet address is required only for migration or seed flows that create a school; see [Stellar testnet setup](stellar-integration.md#testnet-setup-for-contributors).
 
-`SCHOOL_WALLET_ADDRESS` is optional at startup. A valid Stellar testnet address is needed only for seed or migration flows; use synthetic local data and never commit private keys, credentials, or personal data.
+## Start the Local Stack
 
-## Start The Application
-
-Use the complete Compose stack. MongoDB is a required single-node replica set and its port is intentionally not published to the host:
+Run the complete stack so MongoDB stays on its internal network and can provide the replica set required by MongoDB transactions:
 
 ```bash
 docker compose up --build -d --wait
 ```
 
-Verify the stack:
+Verify the services:
 
 ```bash
 docker compose ps
@@ -72,58 +71,38 @@ curl http://localhost:5000/health
 curl -I http://localhost:3000
 ```
 
-Open:
+Open the frontend at <http://localhost:3000>. The backend API is available at <http://localhost:5000>, and development API documentation is at <http://localhost:5000/api/docs>.
 
-- Frontend: <http://localhost:3000>
-- Backend health: <http://localhost:5000/health>
-- API docs in development: <http://localhost:5000/api/docs>
+The Compose backend runs pending migrations before starting. Do not start a second backend on port 5000 while the Compose backend is running.
 
-Compose runs pending migrations before starting the backend. Do not start a second backend or frontend on the same ports while the Compose services are running.
-
-Stop the stack without deleting local database data:
+To stop the stack while keeping database data:
 
 ```bash
 docker compose down
 ```
 
-To discard local MongoDB data and initialize again:
+To remove local database volumes and start over, use `docker compose down -v`; this deletes local MongoDB data.
+
+## Tests and First Change
+
+Run the fast repository checks before editing:
 
 ```bash
-docker compose down -v
-docker compose up --build -d --wait
-```
-
-## Tests And First Change
-
-Run the focused repository checks from the root:
-
-```bash
-npm test -- --runInBand
-(cd backend && npm test -- --runInBand)
+npm test
+(cd backend && npm test)
 (cd frontend && npm test -- --runInBand)
 ```
 
-For a backend change, also run:
-
-```bash
-(cd backend && npm run lint)
-```
-
-For a frontend rendering or routing change, also run:
-
-```bash
-(cd frontend && npm run build)
-```
-
-Create a branch, make one small change, and inspect the diff:
+Create a branch, make one small change, and run the check that covers it. For backend changes, also run `npm run lint` from `backend`; for frontend changes, run `npm run build` from `frontend` when the change affects rendering or routing.
 
 ```bash
 git switch -c docs/my-first-change
 # edit a file
+
 git diff --check
 ```
 
-For an application change, rebuild the affected Compose services and check the backend again:
+When the change affects the running app, rebuild the relevant service and repeat the health check:
 
 ```bash
 docker compose up --build -d backend frontend
@@ -132,9 +111,9 @@ curl http://localhost:5000/health
 
 ## Troubleshooting
 
-### Compose fails before starting
+### Compose does not start
 
-Check required root variables and the first failing service:
+Check the rendered service state and the first failing service:
 
 ```bash
 docker compose ps
@@ -142,37 +121,37 @@ docker compose logs --tail=100 mongo
 docker compose logs --tail=100 backend
 ```
 
-MongoDB and backend credentials come from the root `.env`. Do not paste `.env` files or credential-bearing logs into issues. If MongoDB was initialized with incompatible local credentials, use `docker compose down -v` and start again.
+If Compose reports that `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD`, or another required variable is missing, check the root `.env`. Do not paste that file or its logs into an issue. If an old local volume has an incompatible MongoDB initialization, stop the stack and recreate local data with `docker compose down -v`.
 
 ### Backend is unhealthy
 
-The backend requires `MONGO_URI` and `JWT_SECRET`. Confirm MongoDB is healthy, then inspect readiness:
+The backend requires `MONGO_URI` and `JWT_SECRET`. Confirm that MongoDB is healthy before inspecting the backend:
 
 ```bash
 docker compose ps mongo
-curl http://localhost:5000/health/ready
 docker compose logs --tail=100 backend
+curl http://localhost:5000/health/ready
 ```
 
-A `degraded` health response can indicate a temporary Stellar Horizon or Redis problem. MongoDB connectivity determines whether the backend is `unhealthy`. Inside a container, never use `localhost` for MongoDB; Compose supplies the internal Mongo URI.
+The health response can be `degraded` when Stellar Horizon or Redis is unavailable; MongoDB connectivity is what determines whether the service is `unhealthy`. A backend started on the host must use the host URI in `backend/.env`; a backend in Compose must use the Compose-provided URI and must not be pointed at `localhost` inside the container.
 
 ### Frontend cannot reach the API
 
-Keep `NEXT_PUBLIC_API_URL=/api` in `frontend/.env.local`, confirm the backend is listening on port 5000, and restart the frontend after changing any `NEXT_PUBLIC_*` value. The development proxy defaults to `http://localhost:5000`.
+Keep `NEXT_PUBLIC_API_URL=/api` in `frontend/.env.local` and ensure the backend is listening on port 5000. The Next.js development proxy targets `http://localhost:5000` by default. After changing a `NEXT_PUBLIC_*` value, restart or rebuild the frontend because Next.js embeds these values during startup/build.
 
 ### Tests fail before running
 
-Run `npm ci` in the directory whose test command failed. Use the root command for repository tests, `backend/npm test` for backend tests, and `frontend/npm test` for frontend tests. Integration, end-to-end, load, and Docker health-check suites are opt-in and require the services described by their root `package.json` scripts.
+Run `npm ci` in the directory whose test command failed. Use the root test command for repository tests, `backend/npm test` for backend package tests, and `frontend/npm test` for frontend package tests. Integration, end-to-end, and Docker health-check suites are opt-in; use the scripts in the root `package.json` only when you have the required services and test data.
 
 ### Seed data is missing
 
-The optional seed script reads `backend/.env` and needs host-reachable MongoDB plus a valid Stellar public address:
+Seeding is optional and requires a host-reachable MongoDB plus a valid Stellar public address. The default Compose file does not publish MongoDB's port, so run this with a local MongoDB or a deliberate Compose override that publishes MongoDB only to `127.0.0.1`:
 
 ```bash
 npm run seed
 ```
 
-The default Compose file does not publish MongoDB to the host, so use a local MongoDB or a deliberate localhost-only Compose override. The seed defaults to the synthetic `SCH001` demo school and is safe to rerun.
+The script reads `backend/.env`, creates the default `SCH001` demo school, and is safe to rerun. Use only synthetic local data; never put real student, credential, wallet-secret, or personally identifiable information in fixtures or logs.
 
 ## Useful Commands
 
@@ -184,4 +163,4 @@ docker compose restart backend
 (cd frontend && npm run dev)
 ```
 
-Use host-run `dev` commands only after stopping the corresponding Compose service. The host-run backend requires MongoDB and Redis to be reachable from the host.
+Use the host-run `dev` commands only after stopping the corresponding Compose service. The host-run backend requires MongoDB and Redis to be reachable from the host; the default Compose file intentionally does not publish MongoDB's port.

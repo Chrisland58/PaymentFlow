@@ -6,6 +6,8 @@ import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
 import SseDegradedBanner from "../components/SseDegradedBanner";
 import RequireAdmin from "../components/RequireAdmin";
+import BlockchainStatusBadge from "../components/BlockchainStatusBadge";
+import { TableDensityControl, useTableDensity } from "../components/TableDensityControl";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
 import {
@@ -52,6 +54,11 @@ function Dashboard() {
   const [error, setError]                     = useState(null);
   const [editingStudent, setEditingStudent]   = useState(null);
   const [editingStudentData, setEditingStudentData] = useState(null);
+
+  // Table density (compact / default / comfortable) — Issue #113
+  const { density, setDensity } = useTableDensity();
+  // Set of student IDs whose detail row is currently expanded — Issue #113
+  const [expandedRows, setExpandedRows] = useState(new Set());
 
   // Real-time SSE — surfaces degraded/reconnecting/failed state (Issues #1054, #1078).
   const { degraded, connectionStatus } = usePaymentEvents({
@@ -169,6 +176,19 @@ function Dashboard() {
     fetchStudents(page, debouncedSearch, statusFilter, classFilter);
   }
 
+  // Toggle expanded detail row for a student — Issue #113
+  function handleRowClick(studentId) {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(studentId)) {
+        next.delete(studentId);
+      } else {
+        next.add(studentId);
+      }
+      return next;
+    });
+  }
+
   const stats = [
     {
       label: t("dashboard.statTotalStudents"),
@@ -256,6 +276,69 @@ function Dashboard() {
           border-radius: 4px;
           background: var(--border);
           animation: skel-pulse 1.4s ease-in-out infinite;
+        }
+
+        /* ── Table density — Issue #113 ──────────────────── */
+        .data-table[data-density='compact'] td,
+        .data-table[data-density='compact'] th {
+          padding: 0.3rem 0.75rem;
+          font-size: 0.8rem;
+        }
+        .data-table[data-density='comfortable'] td,
+        .data-table[data-density='comfortable'] th {
+          padding: 1rem 1.25rem;
+          font-size: 0.9375rem;
+        }
+
+        /* ── Responsive column hiding — Issue #113 ───────── */
+        @media (max-width: 640px) {
+          .col-hide-sm { display: none; }
+        }
+        @media (max-width: 480px) {
+          .col-hide-xs { display: none; }
+        }
+
+        /* ── Expandable row detail — Issue #113 ──────────── */
+        .row-clickable {
+          cursor: pointer;
+          user-select: none;
+        }
+        .row-clickable:hover td {
+          background: var(--accent-subtle);
+        }
+        .row-clickable:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: -2px;
+        }
+        .row-expanded td {
+          background: var(--accent-subtle);
+        }
+        .row-detail td {
+          padding: 0.75rem 1rem;
+          background: var(--bg-subtle, var(--bg));
+          border-top: 1px solid var(--border);
+          border-bottom: 2px solid var(--accent-subtle);
+        }
+        .row-detail-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+          gap: 0.75rem 1.5rem;
+        }
+        .row-detail-item {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+        .row-detail-label {
+          font-size: 0.68rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.07em;
+          color: var(--text-muted);
+        }
+        .row-detail-value {
+          font-size: 0.875rem;
+          color: var(--text);
         }
       `}</style>
 
@@ -399,6 +482,8 @@ function Dashboard() {
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
+              {/* Density toggle — Issue #113 */}
+              <TableDensityControl density={density} setDensity={setDensity} />
             </div>
           </div>
 
@@ -419,14 +504,18 @@ function Dashboard() {
               </div>
             ) : (
               <div style={{ overflowX: "auto" }} aria-busy={studentsLoading} aria-label={t("dashboard.studentTableAria")}>
-                <table className="data-table" aria-label={studentsLoading ? t("dashboard.studentsLoadingAria") : t("dashboard.studentTableAria")}>
+                <table
+                  className="data-table"
+                  data-density={density}
+                  aria-label={studentsLoading ? t("dashboard.studentsLoadingAria") : t("dashboard.studentTableAria")}
+                >
                   <thead>
                     <tr>
                       <th scope="col">{t("dashboard.colStudentId")}</th>
                       <th scope="col">{t("dashboard.colName")}</th>
-                      <th scope="col">{t("dashboard.colClass")}</th>
-                      <th scope="col">{t("dashboard.colFee")}</th>
-                      <th scope="col">{t("dashboard.colStatus")}</th>
+                      <th scope="col" className="col-hide-sm">{t("dashboard.colClass")}</th>
+                      <th scope="col" className="col-hide-sm">{t("dashboard.colFee")}</th>
+                      <th scope="col" className="col-hide-xs">{t("dashboard.colStatus")}</th>
                       <th scope="col"></th>
                     </tr>
                   </thead>
@@ -436,9 +525,9 @@ function Dashboard() {
                         <tr key={i}>
                           <td><div className="skel-block" style={{ height: 12, width: 72 }} /></td>
                           <td><div className="skel-block" style={{ height: 12, width: 130 }} /></td>
-                          <td><div className="skel-block" style={{ height: 12, width: 44 }} /></td>
-                          <td><div className="skel-block" style={{ height: 12, width: 56 }} /></td>
-                          <td><div className="skel-block" style={{ height: 20, width: 52, borderRadius: 20 }} /></td>
+                          <td className="col-hide-sm"><div className="skel-block" style={{ height: 12, width: 44 }} /></td>
+                          <td className="col-hide-sm"><div className="skel-block" style={{ height: 12, width: 56 }} /></td>
+                          <td className="col-hide-xs"><div className="skel-block" style={{ height: 20, width: 52, borderRadius: 20 }} /></td>
                           <td><div className="skel-block" style={{ height: 28, width: 42, borderRadius: 6 }} /></td>
                         </tr>
                       ))
@@ -457,27 +546,80 @@ function Dashboard() {
                     ) : students.map(s => {
                       const st = (s.status || "unpaid").toLowerCase();
                       const badge = STATUS_BADGE[st] || STATUS_BADGE.unpaid;
+                      const isExpanded = expandedRows.has(s.studentId);
                       return (
-                        <tr key={s.studentId}>
-                          <td className="col-mono">{s.studentId}</td>
-                          <td className="student-row-name">{s.name}</td>
-                          <td className="student-row-class">{s.class}</td>
-                          <td className="student-row-fee">
-                            <span style={{ fontVariantNumeric: "tabular-nums" }}>{s.feeAmount}</span>
-                            <span style={{ marginLeft: "0.25rem", fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600 }}>XLM</span>
-                          </td>
-                          <td>
-                            <span className={badge.cls}>{badge.label}</span>
-                          </td>
-                          <td>
-                            <button
-                              onClick={() => handleEditStudent(s)}
-                              className="btn btn-sm btn-ghost"
-                            >
-                              {t("actions.edit")}
-                            </button>
-                          </td>
-                        </tr>
+                        <>
+                          <tr
+                            key={s.studentId}
+                            className={`row-clickable${isExpanded ? " row-expanded" : ""}`}
+                            onClick={() => handleRowClick(s.studentId)}
+                            aria-expanded={isExpanded}
+                            aria-label={isExpanded ? t("dashboard.collapseRow") : t("dashboard.expandRow")}
+                            tabIndex={0}
+                            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(s.studentId); } }}
+                          >
+                            <td className="col-mono">{s.studentId}</td>
+                            <td className="student-row-name">{s.name}</td>
+                            <td className="student-row-class col-hide-sm">{s.class}</td>
+                            <td className="student-row-fee col-hide-sm">
+                              <span style={{ fontVariantNumeric: "tabular-nums" }}>{s.feeAmount}</span>
+                              <span style={{ marginLeft: "0.25rem", fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600 }}>XLM</span>
+                            </td>
+                            <td className="col-hide-xs">
+                              <span className={badge.cls}>{badge.label}</span>
+                            </td>
+                            <td>
+                              <button
+                                onClick={e => { e.stopPropagation(); handleEditStudent(s); }}
+                                className="btn btn-sm btn-ghost"
+                              >
+                                {t("actions.edit")}
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr key={`${s.studentId}-detail`} className="row-detail">
+                              <td colSpan="6">
+                                <div className="row-detail-grid" aria-label={t("dashboard.expandedDetails")}>
+                                  <div className="row-detail-item">
+                                    <span className="row-detail-label">{t("dashboard.colStudentId")}</span>
+                                    <span className="row-detail-value col-mono">{s.studentId}</span>
+                                  </div>
+                                  <div className="row-detail-item">
+                                    <span className="row-detail-label">{t("dashboard.colName")}</span>
+                                    <span className="row-detail-value">{s.name}</span>
+                                  </div>
+                                  <div className="row-detail-item">
+                                    <span className="row-detail-label">{t("dashboard.colClass")}</span>
+                                    <span className="row-detail-value">{s.class}</span>
+                                  </div>
+                                  <div className="row-detail-item">
+                                    <span className="row-detail-label">{t("dashboard.colFee")}</span>
+                                    <span className="row-detail-value">{s.feeAmount} XLM</span>
+                                  </div>
+                                  <div className="row-detail-item">
+                                    <span className="row-detail-label">{t("dashboard.colStatus")}</span>
+                                    <span className="row-detail-value">
+                                      <span className={badge.cls}>{badge.label}</span>
+                                    </span>
+                                  </div>
+                                  {s.parentEmail && (
+                                    <div className="row-detail-item">
+                                      <span className="row-detail-label">{t("studentForm.parentEmail")}</span>
+                                      <span className="row-detail-value">{s.parentEmail}</span>
+                                    </div>
+                                  )}
+                                  {s.parentPhone && (
+                                    <div className="row-detail-item">
+                                      <span className="row-detail-label">{t("studentForm.parentPhone")}</span>
+                                      <span className="row-detail-value">{s.parentPhone}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
                       );
                     })}
                   </tbody>
