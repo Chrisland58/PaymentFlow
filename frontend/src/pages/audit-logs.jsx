@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import { getAuditLogs } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
-import { useAuditFilters } from "../hooks/useAuditFilters";
 import {
   IconChevronLeft, IconChevronRight, IconAlertTriangle, IconCheck,
 } from "../components/Icons";
+import EmptyState from "../components/EmptyState";
 import PageHero from "../components/PageHero";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
@@ -40,25 +40,35 @@ const ACTION_OPTIONS = Object.entries(ACTION_LABELS).map(([value, label]) => ({ 
 
 function AuditLogsContent() {
   const { t } = useTranslation();
-
-  // ── Filter state (URL-serialised) ────────────────────────────────────────
-  const { filters, setFilter, clearAll, apiParams, paginationResetCount } =
-    useAuditFilters();
-
-  // ── Data state ───────────────────────────────────────────────────────────
   const [logs, setLogs]               = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
   const [total, setTotal]             = useState(0);
   const [nextCursor, setNextCursor]   = useState(null);
-  const [cursorStack, setCursorStack] = useState([]);
+  const [cursorStack, setCursorStack] = useState([]); // Stack of previous cursors for back button
   const [expandedId, setExpandedId]   = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // Whether any filter is active (used to show the clear-all button).
-  const hasActiveFilters = Object.values(filters).some(Boolean);
+  const [actionFilter, setActionFilter]         = useState("");
+  const [targetTypeFilter, setTargetTypeFilter] = useState("");
+  const [resultFilter, setResultFilter]         = useState("");
+  const [startDate, setStartDate]               = useState("");
+  const [endDate, setEndDate]                   = useState("");
+  const [actorIdInput, setActorIdInput]         = useState("");
+  const [actorIdFilter, setActorIdFilter]       = useState("");
+  const [searchInput, setSearchInput]           = useState("");
+  const [searchFilter, setSearchFilter]         = useState("");
 
-  // ── Fetch ─────────────────────────────────────────────────────────────────
+  // Debounce the free-text inputs so we don't fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setActorIdFilter(actorIdInput.trim()), 350);
+    return () => clearTimeout(t);
+  }, [actorIdInput]);
+  useEffect(() => {
+    const t = setTimeout(() => setSearchFilter(searchInput.trim()), 350);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
   const fetchLogs = (cursor = null) => {
     const isLoadMore = cursor !== null && cursor !== undefined;
     if (isLoadMore) {
@@ -69,15 +79,24 @@ function AuditLogsContent() {
       setCursorStack([]);
     }
     setError(null);
-
-    const params = { ...apiParams };
+    const params = { limit: 50 };
     if (cursor) params.cursor = cursor;
-
+    if (actionFilter)     params.action     = actionFilter;
+    if (targetTypeFilter) params.targetType = targetTypeFilter;
+    if (resultFilter)     params.result     = resultFilter;
+    if (actorIdFilter)    params.performedBy = actorIdFilter;
+    if (searchFilter)     params.search     = searchFilter;
+    if (startDate)        params.startDate  = new Date(startDate).toISOString();
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      params.endDate = end.toISOString();
+    }
     getAuditLogs(params)
       .then(({ data }) => {
         if (isLoadMore) {
-          setLogs((prev) => [...prev, ...data.data]);
-          setCursorStack((prev) => [...prev, cursor]);
+          setLogs(prev => [...prev, ...data.data]);
+          setCursorStack(prev => [...prev, cursor]);
         } else {
           setLogs(data.data);
           setTotal(data.total);
@@ -85,10 +104,7 @@ function AuditLogsContent() {
         setNextCursor(data.nextCursor);
       })
       .catch((err) => {
-        setError(
-          getErrorMessage(err.response?.data?.code, err.response?.data?.error) ||
-          t("auditLogs.failedToLoad")
-        );
+        setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("auditLogs.failedToLoad"));
       })
       .finally(() => {
         if (isLoadMore) {
@@ -99,11 +115,7 @@ function AuditLogsContent() {
       });
   };
 
-  // Re-fetch from page 1 whenever any filter changes (paginationResetCount
-  // increments on every setFilter / clearAll call) or on mount.
-  useEffect(() => {
-    fetchLogs(null);
-  }, [paginationResetCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchLogs(1); }, [actionFilter, targetTypeFilter, resultFilter, actorIdFilter, searchFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -140,27 +152,6 @@ function AuditLogsContent() {
         .al-filter-input:focus {
           border-color: var(--accent);
           box-shadow: 0 0 0 3px var(--accent-subtle);
-        }
-        .al-clear-row {
-          display: flex;
-          justify-content: flex-end;
-          padding: 0.5rem 1.5rem 0;
-        }
-        .al-clear-btn {
-          padding: 0.3rem 0.75rem;
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          background: transparent;
-          color: var(--text-muted);
-          font-size: 0.75rem;
-          font-family: inherit;
-          cursor: pointer;
-          transition: background 0.12s, color 0.12s;
-        }
-        .al-clear-btn:hover {
-          background: var(--danger-bg);
-          color: var(--danger-text);
-          border-color: var(--danger-text);
         }
         .al-empty {
           padding: 3.5rem;
@@ -232,12 +223,12 @@ function AuditLogsContent() {
             <div>
               <label className="al-filter-label">{t("auditLogs.filterActionLabel")}</label>
               <select
-                value={filters.action}
-                onChange={(e) => setFilter("action", e.target.value)}
+                value={actionFilter}
+                onChange={e => setActionFilter(e.target.value)}
                 className="al-filter-input"
               >
                 <option value="">{t("auditLogs.allActions")}</option>
-                {ACTION_OPTIONS.map((o) => (
+                {ACTION_OPTIONS.map(o => (
                   <option key={o.value} value={o.value}>{t(o.label)}</option>
                 ))}
               </select>
@@ -246,13 +237,13 @@ function AuditLogsContent() {
             <div>
               <label className="al-filter-label">{t("auditLogs.filterTargetTypeLabel")}</label>
               <select
-                value={filters.targetType}
-                onChange={(e) => setFilter("targetType", e.target.value)}
+                value={targetTypeFilter}
+                onChange={e => setTargetTypeFilter(e.target.value)}
                 className="al-filter-input"
               >
                 <option value="">{t("auditLogs.allTypes")}</option>
-                {["student", "payment", "fee", "school"].map((v) => (
-                  <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>
+                {["student","payment","fee","school"].map(t => (
+                  <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
                 ))}
               </select>
             </div>
@@ -260,8 +251,8 @@ function AuditLogsContent() {
             <div>
               <label className="al-filter-label">{t("auditLogs.filterResultLabel")}</label>
               <select
-                value={filters.result}
-                onChange={(e) => setFilter("result", e.target.value)}
+                value={resultFilter}
+                onChange={e => setResultFilter(e.target.value)}
                 className="al-filter-input"
                 aria-label={t("auditLogs.filterByResult")}
               >
@@ -275,8 +266,8 @@ function AuditLogsContent() {
               <label className="al-filter-label">{t("auditLogs.filterActorIdLabel")}</label>
               <input
                 type="text"
-                value={filters.actorId}
-                onChange={(e) => setFilter("actorId", e.target.value)}
+                value={actorIdInput}
+                onChange={e => setActorIdInput(e.target.value)}
                 placeholder={t("auditLogs.actorPlaceholder")}
                 className="al-filter-input"
               />
@@ -286,8 +277,8 @@ function AuditLogsContent() {
               <label className="al-filter-label">{t("auditLogs.filterSearchLabel")}</label>
               <input
                 type="text"
-                value={filters.search}
-                onChange={(e) => setFilter("search", e.target.value)}
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
                 placeholder={t("auditLogs.searchPlaceholder")}
                 className="al-filter-input"
               />
@@ -297,8 +288,8 @@ function AuditLogsContent() {
               <label className="al-filter-label">{t("auditLogs.filterFromLabel")}</label>
               <input
                 type="date"
-                value={filters.startDate}
-                onChange={(e) => setFilter("startDate", e.target.value)}
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
                 className="al-filter-input"
               />
             </div>
@@ -307,63 +298,98 @@ function AuditLogsContent() {
               <label className="al-filter-label">{t("auditLogs.filterToLabel")}</label>
               <input
                 type="date"
-                value={filters.endDate}
-                onChange={(e) => setFilter("endDate", e.target.value)}
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
                 className="al-filter-input"
               />
             </div>
           </div>
 
-          {/* Clear-all button — only shown when at least one filter is active */}
-          {hasActiveFilters && (
-            <div className="al-clear-row">
-              <button
-                className="al-clear-btn"
-                onClick={clearAll}
-                aria-label={t("auditLogs.clearAllFilters", "Clear all filters")}
-              >
-                {t("auditLogs.clearAllFilters", "Clear all filters")}
-              </button>
-            </div>
-          )}
+          {/* Table — loading / error / empty / data */}
+          {(() => {
+            const hasActiveFilters = !!(actionFilter || targetTypeFilter || resultFilter || actorIdFilter || searchFilter || startDate || endDate);
 
-          {/* Alerts */}
-          {error && (
-            <div className="card-body">
-              <div role="alert" className="alert alert-danger">
-                <IconAlertTriangle size={16} />
-                <span>{error}</span>
-              </div>
-            </div>
-          )}
+            if (error) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("auditLogs.colTimestamp")}</th>
+                        <th scope="col">{t("auditLogs.colAction")}</th>
+                        <th scope="col">{t("auditLogs.colPerformedBy")}</th>
+                        <th scope="col">{t("auditLogs.colTarget")}</th>
+                        <th scope="col">{t("auditLogs.colResult")}</th>
+                        <th scope="col">{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState
+                        variant="error"
+                        colSpan={6}
+                        title={t("auditLogs.failedToLoad")}
+                        description="Check your connection and try again."
+                        action={{ label: t("actions.retry"), onClick: () => fetchLogs(null) }}
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
 
-          {/* Table */}
-          {loading ? (
-            <div style={{ overflowX: "auto" }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>{t("auditLogs.colTimestamp")}</th><th>{t("auditLogs.colAction")}</th><th>{t("auditLogs.colPerformedBy")}</th>
-                    <th>{t("auditLogs.colTarget")}</th><th>{t("auditLogs.colResult")}</th><th>{t("auditLogs.colDetails")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i}>
-                      {[100, 140, 80, 120, 60, 40].map((w, j) => (
-                        <td key={j}><div className="skeleton" style={{ height: 12, width: w }} /></td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : logs.length === 0 ? (
-            <div className="al-empty">
-              <p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>{t("auditLogs.noLogsFound")}</p>
-              <p style={{ fontSize: "0.8125rem" }}>{t("auditLogs.emptyFilters")}</p>
-            </div>
-          ) : (
+            if (loading) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-busy="true" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th>{t("auditLogs.colTimestamp")}</th><th>{t("auditLogs.colAction")}</th><th>{t("auditLogs.colPerformedBy")}</th>
+                        <th>{t("auditLogs.colTarget")}</th><th>{t("auditLogs.colResult")}</th><th>{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState variant="loading" colSpan={6} />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            if (logs.length === 0) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("auditLogs.colTimestamp")}</th>
+                        <th scope="col">{t("auditLogs.colAction")}</th>
+                        <th scope="col">{t("auditLogs.colPerformedBy")}</th>
+                        <th scope="col">{t("auditLogs.colTarget")}</th>
+                        <th scope="col">{t("auditLogs.colResult")}</th>
+                        <th scope="col">{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState
+                        variant={hasActiveFilters ? "filtered" : "empty"}
+                        colSpan={6}
+                        title={hasActiveFilters ? t("auditLogs.noLogsFound") : "No audit logs yet"}
+                        description={hasActiveFilters ? t("auditLogs.emptyFilters") : "Audit events will appear here once activity is recorded."}
+                        action={hasActiveFilters ? {
+                          label: "Clear filters",
+                          onClick: () => {
+                            setActionFilter(""); setTargetTypeFilter(""); setResultFilter("");
+                            setActorIdInput(""); setSearchInput(""); setStartDate(""); setEndDate("");
+                          }
+                        } : undefined}
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            return (
             <div style={{ overflowX: "auto" }}>
               <table className="data-table">
                 <thead>
@@ -426,7 +452,8 @@ function AuditLogsContent() {
                 </tbody>
               </table>
             </div>
-          )}
+          );
+          })()}
 
           {/* Pagination */}
           {!loading && nextCursor && (
@@ -435,7 +462,10 @@ function AuditLogsContent() {
                 <button
                   className="page-btn"
                   onClick={() => {
-                    // Reset to first page with current filters (cursor stack is cleared).
+                    const prevStack = cursorStack.slice(0, -1);
+                    const prevCursor = prevStack.length > 0 ? prevStack[prevStack.length - 1] : null;
+                    setCursorStack(prevStack);
+                    // Reset to first page with current filters
                     fetchLogs(null);
                   }}
                   aria-label={t("actions.previousPage")}
@@ -462,7 +492,7 @@ function AuditLogsContent() {
   );
 }
 
-export default function AuditLogs() {
+export default function AuditLogsPage() {
   return (
     <RequireAdmin>
       <AuditLogsContent />
