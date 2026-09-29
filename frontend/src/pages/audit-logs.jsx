@@ -1,15 +1,13 @@
 import { useState, useEffect } from "react";
 import { getAuditLogs } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
-import { isRetryable } from "../utils/retryClassification";
 import {
   IconChevronLeft, IconChevronRight, IconAlertTriangle, IconCheck,
 } from "../components/Icons";
-import ErrorAlert from "../components/ErrorAlert";
+import EmptyState from "../components/EmptyState";
 import PageHero from "../components/PageHero";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
-import { MAX_RETRY_ATTEMPTS } from "../hooks/useRetry";
 
 function formatTimestamp(isoString, t) {
   if (!isoString) return t("auditLogs.notAvailable");
@@ -45,8 +43,6 @@ function AuditLogsContent() {
   const [logs, setLogs]               = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
-  const [errorRetryable, setErrorRetryable] = useState(false);
-  const [retryAttempts, setRetryAttempts]   = useState(0);
   const [total, setTotal]             = useState(0);
   const [nextCursor, setNextCursor]   = useState(null);
   const [cursorStack, setCursorStack] = useState([]); // Stack of previous cursors for back button
@@ -73,7 +69,7 @@ function AuditLogsContent() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const fetchLogs = (cursor = null, resetRetry = false) => {
+  const fetchLogs = (cursor = null) => {
     const isLoadMore = cursor !== null && cursor !== undefined;
     if (isLoadMore) {
       setLoadingMore(true);
@@ -81,8 +77,6 @@ function AuditLogsContent() {
       setLoading(true);
       setLogs([]);
       setCursorStack([]);
-      // New filter request always resets the retry counter.
-      if (resetRetry) setRetryAttempts(0);
     }
     setError(null);
     const params = { limit: 50 };
@@ -100,10 +94,6 @@ function AuditLogsContent() {
     }
     getAuditLogs(params)
       .then(({ data }) => {
-        // Success — clear any previous error and reset attempt counter.
-        setError(null);
-        setErrorRetryable(false);
-        setRetryAttempts(0);
         if (isLoadMore) {
           setLogs(prev => [...prev, ...data.data]);
           setCursorStack(prev => [...prev, cursor]);
@@ -114,16 +104,7 @@ function AuditLogsContent() {
         setNextCursor(data.nextCursor);
       })
       .catch((err) => {
-        setRetryAttempts(prev => {
-          const nextAttempts = prev + 1;
-          const canRetry = isRetryable(err) && nextAttempts < MAX_RETRY_ATTEMPTS;
-          const msg = nextAttempts >= MAX_RETRY_ATTEMPTS
-            ? getErrorMessage("MAX_RETRIES_EXCEEDED")
-            : (getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("auditLogs.failedToLoad"));
-          setError(msg);
-          setErrorRetryable(canRetry);
-          return nextAttempts;
-        });
+        setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("auditLogs.failedToLoad"));
       })
       .finally(() => {
         if (isLoadMore) {
@@ -134,7 +115,7 @@ function AuditLogsContent() {
       });
   };
 
-  useEffect(() => { fetchLogs(1, true); }, [actionFilter, targetTypeFilter, resultFilter, actorIdFilter, searchFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchLogs(1); }, [actionFilter, targetTypeFilter, resultFilter, actorIdFilter, searchFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -324,49 +305,91 @@ function AuditLogsContent() {
             </div>
           </div>
 
-          {/* Alerts */}
-          {error && (
-            <div className="card-body">
-              <ErrorAlert
-                retryState={{
-                  error,
-                  isRetryable: errorRetryable,
-                  attempts: retryAttempts,
-                  exhausted: retryAttempts >= MAX_RETRY_ATTEMPTS,
-                  loading: false,
-                }}
-                onRetry={() => fetchLogs(null, false)}
-              />
-            </div>
-          )}
+          {/* Table — loading / error / empty / data */}
+          {(() => {
+            const hasActiveFilters = !!(actionFilter || targetTypeFilter || resultFilter || actorIdFilter || searchFilter || startDate || endDate);
 
-          {/* Table */}
-          {loading ? (
-            <div style={{ overflowX: "auto" }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>{t("auditLogs.colTimestamp")}</th><th>{t("auditLogs.colAction")}</th><th>{t("auditLogs.colPerformedBy")}</th>
-                    <th>{t("auditLogs.colTarget")}</th><th>{t("auditLogs.colResult")}</th><th>{t("auditLogs.colDetails")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i}>
-                      {[100,140,80,120,60,40].map((w, j) => (
-                        <td key={j}><div className="skeleton" style={{ height: 12, width: w }} /></td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : logs.length === 0 ? (
-            <div className="al-empty">
-              <p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>{t("auditLogs.noLogsFound")}</p>
-              <p style={{ fontSize: "0.8125rem" }}>{t("auditLogs.emptyFilters")}</p>
-            </div>
-          ) : (
+            if (error) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("auditLogs.colTimestamp")}</th>
+                        <th scope="col">{t("auditLogs.colAction")}</th>
+                        <th scope="col">{t("auditLogs.colPerformedBy")}</th>
+                        <th scope="col">{t("auditLogs.colTarget")}</th>
+                        <th scope="col">{t("auditLogs.colResult")}</th>
+                        <th scope="col">{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState
+                        variant="error"
+                        colSpan={6}
+                        title={t("auditLogs.failedToLoad")}
+                        description="Check your connection and try again."
+                        action={{ label: t("actions.retry"), onClick: () => fetchLogs(null) }}
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            if (loading) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-busy="true" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th>{t("auditLogs.colTimestamp")}</th><th>{t("auditLogs.colAction")}</th><th>{t("auditLogs.colPerformedBy")}</th>
+                        <th>{t("auditLogs.colTarget")}</th><th>{t("auditLogs.colResult")}</th><th>{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState variant="loading" colSpan={6} />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            if (logs.length === 0) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("auditLogs.colTimestamp")}</th>
+                        <th scope="col">{t("auditLogs.colAction")}</th>
+                        <th scope="col">{t("auditLogs.colPerformedBy")}</th>
+                        <th scope="col">{t("auditLogs.colTarget")}</th>
+                        <th scope="col">{t("auditLogs.colResult")}</th>
+                        <th scope="col">{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState
+                        variant={hasActiveFilters ? "filtered" : "empty"}
+                        colSpan={6}
+                        title={hasActiveFilters ? t("auditLogs.noLogsFound") : "No audit logs yet"}
+                        description={hasActiveFilters ? t("auditLogs.emptyFilters") : "Audit events will appear here once activity is recorded."}
+                        action={hasActiveFilters ? {
+                          label: "Clear filters",
+                          onClick: () => {
+                            setActionFilter(""); setTargetTypeFilter(""); setResultFilter("");
+                            setActorIdInput(""); setSearchInput(""); setStartDate(""); setEndDate("");
+                          }
+                        } : undefined}
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            return (
             <div style={{ overflowX: "auto" }}>
               <table className="data-table">
                 <thead>
@@ -429,7 +452,8 @@ function AuditLogsContent() {
                 </tbody>
               </table>
             </div>
-          )}
+          );
+          })()}
 
           {/* Pagination */}
           {!loading && nextCursor && (
@@ -465,5 +489,13 @@ function AuditLogsContent() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function AuditLogsPage() {
+  return (
+    <RequireAdmin>
+      <AuditLogsContent />
+    </RequireAdmin>
   );
 }

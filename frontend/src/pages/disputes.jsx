@@ -1,16 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { getDisputes, resolveDispute } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
-import { isRetryable } from "../utils/retryClassification";
 import {
-  IconAlertTriangle, IconExternalLink,
-  IconChevronLeft, IconChevronRight, IconSearch,
+  IconAlertTriangle, IconExternalLink, IconSearch,
 } from "../components/Icons";
-import ErrorAlert from "../components/ErrorAlert";
 import PageHero from "../components/PageHero";
+import Pagination from "../components/Pagination";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
-import { MAX_RETRY_ATTEMPTS } from "../hooks/useRetry";
 
 const STATUS_META = {
   open:         { cls: "badge-success", labelKey: "status.dispute.open" },
@@ -198,11 +195,10 @@ function DisputesContent() {
   const [disputes, setDisputes]       = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
-  const [errorRetryable, setErrorRetryable] = useState(false);
-  const [retryAttempts, setRetryAttempts]   = useState(0);
   const [page, setPage]               = useState(1);
   const [totalPages, setTotalPages]   = useState(1);
   const [totalCount, setTotalCount]   = useState(0);
+  const [pageSize, setPageSize]       = useState(20);
   const [statusFilter, setStatusFilter] = useState("");
   const [studentFilter, setStudentFilter] = useState("");
   const [draftStudent, setDraftStudent]   = useState("");
@@ -210,38 +206,31 @@ function DisputesContent() {
 
   // Auth is cookie-based; the axios interceptor in api.js handles 401 → /login redirect.
 
-  const fetchDisputes = useCallback(async (p = page, resetRetry = false) => {
+  const fetchDisputes = useCallback(async (p = page) => {
     setLoading(true);
     setError(null);
-    setErrorRetryable(false);
-    if (resetRetry) setRetryAttempts(0);
     try {
-      const params = { page: p, limit: 20 };
+      const params = { page: p, limit: pageSize };
       if (statusFilter) params.status = statusFilter;
       if (studentFilter.trim()) params.studentId = studentFilter.trim();
       const res = await getDisputes(params);
-      // Success — clear any prior error and reset counter.
-      setRetryAttempts(0);
       setDisputes(res.data.disputes || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
       setTotalCount(res.data.pagination?.total || 0);
     } catch (err) {
-      setRetryAttempts(prev => {
-        const nextAttempts = prev + 1;
-        const canRetry = isRetryable(err) && nextAttempts < MAX_RETRY_ATTEMPTS;
-        const msg = nextAttempts >= MAX_RETRY_ATTEMPTS
-          ? getErrorMessage("MAX_RETRIES_EXCEEDED")
-          : (getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("disputes.failedToLoad"));
-        setError(msg);
-        setErrorRetryable(canRetry);
-        return nextAttempts;
-      });
+      setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || t("disputes.failedToLoad"));
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, studentFilter, t]);
+  }, [page, pageSize, statusFilter, studentFilter, t]);
 
-  useEffect(() => { fetchDisputes(page, true); }, [page, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchDisputes(page); }, [page, pageSize, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When page size changes, reset to first page.
+  function handlePageSizeChange(newSize) {
+    setPageSize(newSize);
+    setPage(1);
+  }
 
   function handleResolved(updated) {
     setDisputes(prev => prev.map(d => d._id === updated._id ? updated : d));
@@ -316,17 +305,10 @@ function DisputesContent() {
 
         {/* Error */}
         {error && (
-          <ErrorAlert
-            retryState={{
-              error,
-              isRetryable: errorRetryable,
-              attempts: retryAttempts,
-              exhausted: retryAttempts >= MAX_RETRY_ATTEMPTS,
-              loading,
-            }}
-            onRetry={() => fetchDisputes(page, false)}
-            style={{ marginBottom: "1rem" }}
-          />
+          <div role="alert" className="alert alert-danger" style={{ marginBottom: "1rem" }}>
+            <IconAlertTriangle size={16} />
+            <span>{error}</span>
+          </div>
         )}
 
         {/* List */}
@@ -371,29 +353,16 @@ function DisputesContent() {
               />
             ))}
 
-            {totalPages > 1 && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "1rem" }}>
-                <span className="pagination-info">{t("disputes.pageOf", { page, total: totalPages })}</span>
-                <div className="pagination-controls">
-                  <button
-                    className="page-btn"
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                    style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
-                  >
-                    <IconChevronLeft size={15} /> {t("actions.prev")}
-                  </button>
-                  <button
-                    className="page-btn"
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                    style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
-                  >
-                    {t("actions.next")} <IconChevronRight size={15} />
-                  </button>
-                </div>
-              </div>
-            )}
+            <Pagination
+              page={page}
+              pages={totalPages}
+              total={totalCount}
+              pageSize={pageSize}
+              pageSizeOptions={[10, 20, 50]}
+              onPageChange={setPage}
+              onPageSizeChange={handlePageSizeChange}
+              loading={loading}
+            />
           </div>
         )}
       </div>
