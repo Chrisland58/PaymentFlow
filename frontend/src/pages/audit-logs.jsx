@@ -441,3 +441,11 @@ function AuditLogsContent() {
     </>
   );
 }
+
+export default function AuditLogsPage() {
+  return (
+    <RequireAdmin>
+      <AuditLogsContent />
+    </RequireAdmin>
+  );
+}
