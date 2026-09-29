@@ -68,6 +68,7 @@ const bullMQRetryService = require('./services/bullMQRetryService');
 const { initializeRetryQueue, setupMonitoring } = require('./config/retryQueueSetup');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/requestLogger');
+const { correlationIdMiddleware } = require('./middleware/correlationId');
 const { createConcurrentRequestMiddleware } = require('./middleware/concurrentRequestHandler');
 const { requireAdminAuth } = require('./middleware/auth');
 const { jsonDepthGuard, deduplicateQueryParams } = require('./middleware/sanitizeRequest');
@@ -110,7 +111,8 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-School-ID', 'Idempotency-Key'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-School-ID', 'Idempotency-Key', 'X-Correlation-ID'],
+  exposedHeaders: ['X-Correlation-ID'],
   credentials: true,
 }));
 app.use(cookieParser());
@@ -135,6 +137,9 @@ app.use(express.json({
     req.rawBody = buf.toString('utf8');
   },
 }));
+// Correlation ID must be resolved before requestLogger so the logger uses the
+// same ID that will be reflected in the response header.
+app.use(correlationIdMiddleware);
 app.use(requestLogger());
 
 // ── Cache-Control: no-store on auth and sensitive data routes ─────────────────
