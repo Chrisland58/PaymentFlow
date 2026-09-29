@@ -6,6 +6,7 @@ import {
   IconCheck, IconTrendingUp, IconClock, IconX,
 } from "./Icons";
 import PageHero, { StatCard } from "./PageHero";
+import { StandaloneEmptyState } from "./EmptyState";
 import { useTranslation } from "react-i18next";
 import { formatTimestamp, DISPLAY_MODE } from "../utils/dateTime";
 
@@ -214,9 +215,21 @@ export default function ReportDownload() {
       </div>
 
       {error && (
-        <div className="alert alert-danger" style={{ marginBottom: "1rem" }}>
-          <IconAlertTriangle size={15} />
-          <span>{error}</span>
+        <div style={{ marginBottom: "1.5rem" }}>
+          <StandaloneEmptyState
+            variant="error"
+            title={t("reports.failedGenerate")}
+            description={error}
+            action={{ label: t("actions.retry"), onClick: (e) => handleGenerate(e) }}
+          />
+        </div>
+      )}
+
+      {loading && !report && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <StandaloneEmptyState
+            variant="loading"
+          />
         </div>
       )}
 
@@ -416,8 +429,35 @@ export default function ReportDownload() {
               </div>
             </div>
           ) : (
-            <div style={{ textAlign: "center", padding: "3rem", color: "var(--text-muted)" }}>
-              <p style={{ fontWeight: 500 }}>{t("reports.noPaymentsInPeriod")}</p>
+            <div className="card">
+              <StandaloneEmptyState
+                variant={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? "filtered"
+                    : "empty"
+                }
+                title={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? t("reports.noPaymentsInPeriod")
+                    : t("reports.noPaymentsYet", "No payments recorded yet")
+                }
+                description={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? t("reports.tryAdjustingFilters", "Try adjusting your date range or clearing filters.")
+                    : t("reports.noPaymentsYetDesc", "Payment data will appear here once transactions are recorded.")
+                }
+                action={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? {
+                        label: t("reports.clearAll"),
+                        onClick: () => {
+                          setStartDate(""); setEndDate(""); setClassName("");
+                          setStudentId(""); setPaymentStatus(""); setReport(null);
+                        },
+                      }
+                    : undefined
+                }
+              />
             </div>
           )}
         </>
