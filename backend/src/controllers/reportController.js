@@ -36,6 +36,27 @@ async function getReport(req, res, next) {
     const isAsync = req.query.async === 'true';
     const isLargeReport = getDaysBetween(startDate, endDate) >= LARGE_REPORT_THRESHOLD_DAYS;
 
+    // Audit report exports — exports can contain PII so they are a privileged read
+    if (req.auditContext) {
+      const { logAudit } = require('../services/auditService');
+      await logAudit({
+        schoolId:    req.schoolId,
+        action:      'report_export',
+        performedBy: req.auditContext.performedBy,
+        targetId:    req.schoolId,
+        targetType:  'report',
+        details: {
+          format,
+          startDate: startDate || null,
+          endDate:   endDate   || null,
+          async:     isAsync,
+        },
+        result:    'success',
+        ipAddress: req.auditContext.ipAddress,
+        userAgent: req.auditContext.userAgent,
+      });
+    }
+
     if (isAsync && isLargeReport) {
       try {
         const job = await enqueueReportJob({
