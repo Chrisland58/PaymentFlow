@@ -8,7 +8,9 @@ import {
   IconCheck, IconTrendingUp, IconClock, IconX,
 } from "./Icons";
 import PageHero, { StatCard } from "./PageHero";
+import { StandaloneEmptyState } from "./EmptyState";
 import { useTranslation } from "react-i18next";
+import { formatTimestamp, DISPLAY_MODE } from "../utils/dateTime";
 
 export default function ReportDownload() {
   const { t } = useTranslation();
@@ -228,9 +230,21 @@ export default function ReportDownload() {
       </div>
 
       {error && (
-        <div className="alert alert-danger" style={{ marginBottom: "1rem" }}>
-          <IconAlertTriangle size={15} />
-          <span>{error}</span>
+        <div style={{ marginBottom: "1.5rem" }}>
+          <StandaloneEmptyState
+            variant="error"
+            title={t("reports.failedGenerate")}
+            description={error}
+            action={{ label: t("actions.retry"), onClick: (e) => handleGenerate(e) }}
+          />
+        </div>
+      )}
+
+      {loading && !report && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <StandaloneEmptyState
+            variant="loading"
+          />
         </div>
       )}
 
@@ -249,7 +263,7 @@ export default function ReportDownload() {
               {t("reports.period")} <strong>{report.period.startDate || t("reports.allTime")}</strong>
               {" → "}
               <strong>{report.period.endDate || t("reports.allTime")}</strong>
-              &nbsp;·&nbsp;{t("reports.generatedAt", { date: new Date(report.generatedAt).toLocaleString() })}
+              &nbsp;·&nbsp;{t("reports.generatedAt", { date: (() => { const r = formatTimestamp(report.generatedAt, { mode: DISPLAY_MODE.UTC }); return r.label ? `${r.formatted} ${r.label}` : r.formatted; })() })}
             </p>
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
               <button
@@ -308,7 +322,7 @@ export default function ReportDownload() {
                     {reportHistory.map(entry => (
                       <tr key={entry.id}>
                         <td style={{ whiteSpace: "nowrap" }}>
-                          {new Date(entry.timestamp).toLocaleString()}
+                          {(() => { const r = formatTimestamp(entry.timestamp, { mode: DISPLAY_MODE.UTC }); return r.label ? `${r.formatted} ${r.label}` : r.formatted; })()}
                         </td>
                         <td>{entry.summary.totalAmount} XLM</td>
                         <td>{entry.summary.paymentCount}</td>
@@ -430,8 +444,35 @@ export default function ReportDownload() {
               </div>
             </div>
           ) : (
-            <div style={{ textAlign: "center", padding: "3rem", color: "var(--text-muted)" }}>
-              <p style={{ fontWeight: 500 }}>{t("reports.noPaymentsInPeriod")}</p>
+            <div className="card">
+              <StandaloneEmptyState
+                variant={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? "filtered"
+                    : "empty"
+                }
+                title={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? t("reports.noPaymentsInPeriod")
+                    : t("reports.noPaymentsYet", "No payments recorded yet")
+                }
+                description={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? t("reports.tryAdjustingFilters", "Try adjusting your date range or clearing filters.")
+                    : t("reports.noPaymentsYetDesc", "Payment data will appear here once transactions are recorded.")
+                }
+                action={
+                  startDate || endDate || className || studentId || paymentStatus
+                    ? {
+                        label: t("reports.clearAll"),
+                        onClick: () => {
+                          setStartDate(""); setEndDate(""); setClassName("");
+                          setStudentId(""); setPaymentStatus(""); setReport(null);
+                        },
+                      }
+                    : undefined
+                }
+              />
             </div>
           )}
         </>
