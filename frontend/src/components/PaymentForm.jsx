@@ -3,8 +3,10 @@ import { QRCodeSVG } from "qrcode.react";
 import { useTranslation } from "react-i18next";
 import { generateStellarPaymentUri, availableMemoTypes } from "../utils/stellarUri";
 import { encodeMemo } from "../utils/stellarMemo";
-import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentPlan, getPaymentRefunds } from "../services/api";
+import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds, getPaymentPlan } from "../services/api";
 import DisputeForm from "./DisputeForm";
+import VirtualTransactionList from "./VirtualTransactionList";
+import { useSessionGuard } from "../hooks/useSessionGuard";
 import PaymentConfirmationStep from "./PaymentConfirmationStep";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconCopy, IconCheck, IconAlertTriangle, IconSearch, IconDownload } from "./Icons";
@@ -71,7 +73,6 @@ export default function PaymentForm({ initialStudentId = "", isOnline = true, wa
   const [copied, setCopied]                   = useState(null);
   const [hasDeletedPayments, setHasDeletedPayments] = useState(false);
   const [balanceError, setBalanceError]         = useState(false);
-  const [disputingTx, setDisputingTx]           = useState(null);
   const [disputedTxs, setDisputedTxs]         = useState(new Set());
   const [refunds, setRefunds]                 = useState({}); // txHash -> refund
   // #101 — confirmation step: after lookup, the user must review and confirm
@@ -86,6 +87,22 @@ export default function PaymentForm({ initialStudentId = "", isOnline = true, wa
   // Holds the AbortController for the in-flight lookup so a superseded request
   // can be cancelled before the next one starts (race-condition fix).
   const lookupAbortRef = useRef(null);
+
+  // Issue #5 — session guard: save the non-sensitive student ID draft when the
+  // session expires so it can be restored after re-authentication.
+  // Sensitive fields (walletAddress, memo, txHash, amounts) are never persisted.
+  const { saveDraft, restoreDraft } = useSessionGuard({
+    onSessionExpired: () => saveDraft({ studentId }),
+  });
+
+  // Restore a safe draft (studentId only) left from a previous session expiry.
+  // This runs once on mount, after which the draft is removed from storage.
+  useEffect(() => {
+    const draft = restoreDraft();
+    if (draft?.studentId && !initialStudentId?.trim()) {
+      setStudentId(draft.studentId);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleStudentIdChange(e) {
     const value = e.target.value;
@@ -554,7 +571,7 @@ export default function PaymentForm({ initialStudentId = "", isOnline = true, wa
             </div>
           )}
 
-          {/* Payment History */}
+          {/* Payment History — virtualized via react-window (Issue #7) */}
           {(payments !== null || paymentsLoading) && (
             <div style={{ marginTop: "1.75rem" }}>
               <div style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--text)", marginBottom: "0.875rem", paddingBottom: "0.625rem", borderBottom: "1px solid var(--border)" }}>
