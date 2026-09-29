@@ -87,6 +87,14 @@ const en = {
     lastPage: "Last page",
   },
 
+  networkStatus: {
+    offline: "You are offline. Payment submission is disabled.",
+    offlineAria: "Network connectivity lost",
+    backOnline: "Back online \u2014 refreshing\u2026",
+    staleWarning: "Your connection was interrupted. Data may be stale.",
+    offlineSubmitLabel: "Offline \u2014 submission disabled",
+  },
+
   status: {
     payment: {
       PENDING: "Pending",

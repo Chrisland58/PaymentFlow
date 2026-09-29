@@ -49,7 +49,14 @@ function InfoRow({ label, children }) {
   );
 }
 
-export default function PaymentForm({ initialStudentId = "" }) {
+/**
+ * @param {{ initialStudentId?: string, isOnline?: boolean, wasOffline?: boolean }} props
+ *   isOnline  — when false, disables the student lookup / payment submit button
+ *               to prevent duplicate submissions while the device is offline.
+ *   wasOffline — when true (linger window after reconnect), shows a stale-state
+ *               warning so the parent can offer a refresh before re-submitting.
+ */
+export default function PaymentForm({ initialStudentId = "", isOnline = true, wasOffline = false }) {
   const { t } = useTranslation();
   const [studentId, setStudentId]             = useState(initialStudentId);
   const [shareCopied, setShareCopied]         = useState(false);
@@ -284,10 +291,35 @@ export default function PaymentForm({ initialStudentId = "" }) {
                 className="form-input"
               />
             </div>
-            <button type="submit" disabled={loading} className="btn btn-dark" style={{ width: "100%" }}>
-              {loading ? t("paymentForm.lookingUp") : t("paymentForm.submit")}
+            <button type="submit" disabled={loading || !isOnline} className="btn btn-dark" style={{ width: "100%" }}>
+              {loading ? t("paymentForm.lookingUp") : !isOnline ? t("networkStatus.offlineSubmitLabel", "Offline — submission disabled") : t("paymentForm.submit")}
             </button>
           </form>
+
+          {/* Offline guard — never allow re-submit without explicit user action */}
+          {!isOnline && (
+            <div role="alert" className="alert alert-warning" style={{ marginTop: "0.75rem", fontSize: "0.8125rem" }}>
+              <IconAlertTriangle size={14} />
+              <span>{t("networkStatus.offline", "You are offline. Payment submission is disabled.")}</span>
+            </div>
+          )}
+
+          {/* Stale-state warning shown during the back-online linger window */}
+          {isOnline && wasOffline && (
+            <div role="status" className="alert alert-warning" style={{ marginTop: "0.75rem", fontSize: "0.8125rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+              <span>{t("networkStatus.staleWarning", "Your connection was interrupted. Data may be stale.")}</span>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                style={{ color: "inherit", borderColor: "currentColor", opacity: 0.85, flexShrink: 0 }}
+                onClick={() => {
+                  if (studentId.trim()) lookupStudent(studentId.trim());
+                }}
+              >
+                {t("actions.retry")}
+              </button>
+            </div>
+          )}
 
           {error && (
             <div ref={errorRef} role="alert" tabIndex="-1" className="alert alert-danger" style={{ marginTop: "1rem" }}>
