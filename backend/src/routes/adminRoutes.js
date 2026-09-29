@@ -21,6 +21,9 @@ const {
   retryFailedJob,
   discardFailedJob,
   getQueueStats,
+  listDeadLetterJobs,
+  getDeadLetterJobDetails,
+  replayDeadLetterJob,
 } = require('../controllers/bullMQAdminController');
 const {
   listDeadLetterEvents,
@@ -54,12 +57,15 @@ router.get('/payment-limits', requireAdminAuth, getLimits);
 router.put('/payment-limits', requireAdminAuth, auditContext, updateLimits);
 router.delete('/payment-limits/:schoolId', requireAdminAuth, auditContext, deleteSchoolLimits);
 
-// BullMQ retry queue admin endpoints (Issue #1336)
+// BullMQ retry queue admin endpoints (Issue #1336, #37)
 router.get('/retry-queue/failed', requireAdminAuth, listFailedJobs);
 router.get('/retry-queue/failed/:jobId', requireAdminAuth, getFailedJobDetails);
 router.post('/retry-queue/failed/:jobId/retry', requireAdminAuth, auditContext, retryFailedJob);
 router.delete('/retry-queue/failed/:jobId', requireAdminAuth, auditContext, discardFailedJob);
 router.get('/retry-queue/stats', requireAdminAuth, getQueueStats);
+router.get('/retry-queue/dlq', requireAdminAuth, listDeadLetterJobs);
+router.get('/retry-queue/dlq/:jobId', requireAdminAuth, getDeadLetterJobDetails);
+router.post('/retry-queue/dlq/:jobId/replay', requireAdminAuth, auditContext, replayDeadLetterJob);
 
 // Outbox dead-letter queue admin endpoints (Issue #1339)
 router.get('/outbox/dead-letter', requireAdminAuth, listDeadLetterEvents);
