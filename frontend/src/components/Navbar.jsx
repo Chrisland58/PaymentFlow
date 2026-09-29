@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import TestnetBanner from "./TestnetBanner";
+import NotificationCenter from "./NotificationCenter";
 import { useTheme } from "../pages/_app";
 import { useAdminAuthContext } from "../hooks/AdminAuthContext";
 import { SUPPORTED_LOCALES, LOCALE_NAMES } from "../i18n";
@@ -463,6 +464,7 @@ export default function Navbar() {
             >
               {dark ? <SunIcon /> : <MoonIcon />}
             </button>
+            {isAdmin && <NotificationCenter />}
             {isAdmin
               ? <button className="nav-pill" onClick={logout}>{t("actions.signOut")}</button>
               : <Link href="/login" className="nav-pill nav-pill-accent">{t("nav.adminLogin")}</Link>
