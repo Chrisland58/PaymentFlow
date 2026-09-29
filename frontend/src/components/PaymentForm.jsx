@@ -7,8 +7,10 @@ import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalan
 import DisputeForm from "./DisputeForm";
 import VirtualTransactionList from "./VirtualTransactionList";
 import { useSessionGuard } from "../hooks/useSessionGuard";
+import PaymentConfirmationStep from "./PaymentConfirmationStep";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconCopy, IconCheck, IconAlertTriangle, IconSearch, IconDownload } from "./Icons";
+import TimestampDisplay, { DISPLAY_MODE } from "./TimestampDisplay";
 
 const STATUS_BADGE = {
   valid:     { cls: "badge badge-success", key: "status.validation.valid" },
@@ -50,7 +52,15 @@ function InfoRow({ label, children }) {
   );
 }
 
-export default function PaymentForm({ initialStudentId = "" }) {
+/**
+ * @param {{ initialStudentId?: string, isOnline?: boolean, wasOffline?: boolean }} props
+ *   isOnline  — when false, disables the student lookup / payment submit button
+ *               to prevent duplicate submissions while the device is offline.
+ *   wasOffline — when true (linger window after reconnect), shows a stale-state
+ *               warning so the parent can offer a refresh before re-submitting.
+ */
+export default function PaymentForm({ initialStudentId = "", isOnline = true, wasOffline = false }) {
+  const { t } = useTranslation();
   const [studentId, setStudentId]             = useState(initialStudentId);
   const [shareCopied, setShareCopied]         = useState(false);
   const [student, setStudent]                 = useState(null);
@@ -65,6 +75,9 @@ export default function PaymentForm({ initialStudentId = "" }) {
   const [balanceError, setBalanceError]         = useState(false);
   const [disputedTxs, setDisputedTxs]         = useState(new Set());
   const [refunds, setRefunds]                 = useState({}); // txHash -> refund
+  // #101 — confirmation step: after lookup, the user must review and confirm
+  // the payment details before the QR code and wallet address are revealed.
+  const [confirmed, setConfirmed]             = useState(false);
   // #1118 — wallets that cannot send free-text memos can switch the QR code to
   // MEMO_ID or MEMO_HASH; all three decode back to the same payment reference.
   const [memoType, setMemoType]               = useState("MEMO_TEXT");
@@ -120,6 +133,7 @@ export default function PaymentForm({ initialStudentId = "" }) {
     setPaymentPlan(null);
     setHasDeletedPayments(false);
     setBalanceError(false);
+    setConfirmed(false); // #101 — reset confirmation when looking up a new student
     setLoading(true);
     setPaymentsLoading(true);
     try {
@@ -136,11 +150,16 @@ export default function PaymentForm({ initialStudentId = "" }) {
         }),
         getPaymentPlan(id, { signal }).catch(() => null),
       ]);
-      setStudent(stuRes.data);
-      setInstructions(instrRes.data);
-      const paymentsList = payRes.data?.payments ?? payRes.data ?? [];
+      if (stuRes.status === "rejected") throw stuRes.reason;
+
+      setStudent(stuRes.value?.data ?? null);
+      setInstructions(instrRes.status === "fulfilled" ? instrRes.value?.data ?? null : null);
+      setPaymentPlan(planRes.status === "fulfilled" ? planRes.value?.data ?? null : null);
+      const paymentsData = payRes.status === "fulfilled" ? payRes.value?.data : [];
+      const paymentsList = paymentsData?.payments ?? paymentsData ?? [];
       setPayments(paymentsList);
-      setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
+      const balanceData = balRes.status === "fulfilled" ? balRes.value?.data : null;
+      setHasDeletedPayments(balanceData?.hasDeletedPayments === true);
       // Fetch refunds for each payment
       const newRefunds = {};
       for (const p of paymentsList) {
@@ -245,7 +264,6 @@ export default function PaymentForm({ initialStudentId = "" }) {
   }
 
   const isTestnet = process.env.NEXT_PUBLIC_STELLAR_NETWORK === "testnet";
-  const { t } = useTranslation();
 
   return (
     <>
@@ -291,10 +309,35 @@ export default function PaymentForm({ initialStudentId = "" }) {
                 className="form-input"
               />
             </div>
-            <button type="submit" disabled={loading} className="btn btn-dark" style={{ width: "100%" }}>
-              {loading ? t("paymentForm.lookingUp") : t("paymentForm.submit")}
+            <button type="submit" disabled={loading || !isOnline} className="btn btn-dark" style={{ width: "100%" }}>
+              {loading ? t("paymentForm.lookingUp") : !isOnline ? t("networkStatus.offlineSubmitLabel", "Offline — submission disabled") : t("paymentForm.submit")}
             </button>
           </form>
+
+          {/* Offline guard — never allow re-submit without explicit user action */}
+          {!isOnline && (
+            <div role="alert" className="alert alert-warning" style={{ marginTop: "0.75rem", fontSize: "0.8125rem" }}>
+              <IconAlertTriangle size={14} />
+              <span>{t("networkStatus.offline", "You are offline. Payment submission is disabled.")}</span>
+            </div>
+          )}
+
+          {/* Stale-state warning shown during the back-online linger window */}
+          {isOnline && wasOffline && (
+            <div role="status" className="alert alert-warning" style={{ marginTop: "0.75rem", fontSize: "0.8125rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+              <span>{t("networkStatus.staleWarning", "Your connection was interrupted. Data may be stale.")}</span>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                style={{ color: "inherit", borderColor: "currentColor", opacity: 0.85, flexShrink: 0 }}
+                onClick={() => {
+                  if (studentId.trim()) lookupStudent(studentId.trim());
+                }}
+              >
+                {t("actions.retry")}
+              </button>
+            </div>
+          )}
 
           {error && (
             <div ref={errorRef} role="alert" tabIndex="-1" className="alert alert-danger" style={{ marginTop: "1rem" }}>
@@ -305,6 +348,26 @@ export default function PaymentForm({ initialStudentId = "" }) {
 
           {student && instructions && (
             <div style={{ marginTop: "1.25rem" }}>
+              {/* #101 — confirmation step: user must review & confirm before
+                  payment details (QR code, wallet address) are revealed.
+                  Once confirmed, this block renders the full payment UI. */}
+              {!confirmed && (
+                <PaymentConfirmationStep
+                  student={student}
+                  instructions={instructions}
+                  onConfirm={() => setConfirmed(true)}
+                  onEdit={() => {
+                    setStudent(null);
+                    setInstructions(null);
+                    setPayments(null);
+                    setConfirmed(false);
+                    setStudentId("");
+                  }}
+                />
+              )}
+
+              {confirmed && (
+              <>
               {isTestnet && (
                 <div className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
                   <IconAlertTriangle size={14} />
@@ -503,6 +566,8 @@ export default function PaymentForm({ initialStudentId = "" }) {
                   {t("paymentForm.acceptedAssets")} {instructions.acceptedAssets.map(a => a.displayName).join(", ")}
                 </p>
               )}
+              </>
+              )} {/* end confirmed */}
             </div>
           )}
 
@@ -512,14 +577,90 @@ export default function PaymentForm({ initialStudentId = "" }) {
               <div style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--text)", marginBottom: "0.875rem", paddingBottom: "0.625rem", borderBottom: "1px solid var(--border)" }}>
                 {t("paymentForm.paymentHistory")}
               </div>
-              <VirtualTransactionList
-                payments={payments}
-                paymentsLoading={paymentsLoading}
-                studentId={studentId}
-                disputedTxs={disputedTxs}
-                refunds={refunds}
-                onDisputedTxsChange={setDisputedTxs}
-              />
+              {paymentsLoading ? (
+                Array.from({ length: 2 }).map((_, i) => (
+                  <div key={i} className="pf-payment-item">
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                      <div className="skeleton" style={{ height: 14, width: 80 }} />
+                      <div className="skeleton" style={{ height: 20, width: 60, borderRadius: 20 }} />
+                    </div>
+                    <div className="skeleton" style={{ height: 10, width: "100%" }} />
+                  </div>
+                ))
+              ) : payments.length === 0 ? (
+                <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{t("paymentForm.noPayments")}</p>
+              ) : payments.map((p, i) => {
+                const st = p.feeValidationStatus || "unknown";
+                const badge = STATUS_BADGE[st] || STATUS_BADGE.unknown;
+                const canDispute = st === "valid" || st === "overpaid";
+                const alreadyDisputed = disputedTxs.has(p.txHash);
+                const refund = refunds[p.txHash];
+                const refundStatusStyles = {
+                  approval_pending: { cls: "badge badge-warning" },
+                  pending: { cls: "badge badge-info" },
+                  submitted: { cls: "badge badge-primary" },
+                  confirmed: { cls: "badge badge-success" },
+                  failed: { cls: "badge badge-danger" },
+                };
+                return (
+                  <div key={p.txHash || i} className="pf-payment-item">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.4rem", flexWrap: "wrap", gap: "0.5rem" }}>
+                      <strong style={{ fontSize: "0.9rem" }}>
+                        {p.amount}{" "}
+                        <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)" }}>
+                          {p.assetCode || "XLM"}
+                        </span>
+                      </strong>
+                      <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
+                          <span className={badge.cls}>{t(badge.key)}</span>
+                          {refund && (
+                            <span className={refundStatusStyles[refund.status]?.cls || "badge badge-neutral"}>
+                              {refundStatusStyles[refund.status]
+                                ? `${t("status.refund.prefix")} ${t(`status.refund.${refund.status}`)}`
+                                : `${t("status.refund.prefix")} ${refund.status}`}
+                            </span>
+                          )}
+                        </div>
+                    </div>
+                    <div style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.25rem", wordBreak: "break-all" }}>
+                      {p.txHash}
+                    </div>
+                    {p.confirmedAt && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-subtle)" }}>
+                        <TimestampDisplay iso={p.confirmedAt} mode={DISPLAY_MODE.UTC} />
+                      </div>
+                    )}
+
+                    {canDispute && (
+                      <div style={{ marginTop: "0.625rem" }}>
+                        {alreadyDisputed ? (
+                          <span className="badge badge-warning">{t("paymentForm.disputeSubmitted")}</span>
+                        ) : disputingTx === p.txHash ? (
+                          <div style={{ marginTop: "0.5rem" }}>
+                            <DisputeForm
+                              txHash={p.txHash}
+                              studentId={studentId}
+                              onSuccess={() => {
+                                setDisputedTxs(prev => new Set([...prev, p.txHash]));
+                                setDisputingTx(null);
+                              }}
+                              onCancel={() => setDisputingTx(null)}
+                            />
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDisputingTx(p.txHash)}
+                            className="btn btn-sm btn-ghost"
+                            style={{ marginTop: "0.25rem" }}
+                          >
+                            {t("paymentForm.raiseDispute")}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
