@@ -26,6 +26,8 @@ const en = {
     openMenu: "Open menu",
     closeMenu: "Close menu",
     adminSection: "Admin",
+    adminRoleBadgeAria: "You are signed in as an administrator",
+    adminOnlyLinkAria: "Requires admin access",
   },
 
   actions: {
@@ -72,7 +74,17 @@ const en = {
     minutesAgo: "{{mins}}m ago",
     hoursAgo: "{{hrs}}h ago",
     daysAgo: "{{days}}d ago",
-    pageOf: "Page {{page}} of {{total}}",
+    pageOf: "{{page}} / {{total}}",
+  },
+
+  pagination: {
+    rangeOf: "{{start}}–{{end}} of {{total}}",
+    noResults: "No results",
+    rowsPerPage: "Rows per page",
+    rowsPerPageAria: "Rows per page",
+    navAria: "Pagination",
+    firstPage: "First page",
+    lastPage: "Last page",
   },
 
   networkStatus: {
@@ -825,6 +837,57 @@ const en = {
     nameRequired: "Name is required",
     parentEmailInvalid: "Enter a valid email address",
   },
+
+  // ── Issue #106: Transaction Detail ─────────────────────────────────────────
+  transactionDetail: {
+    title: "Transaction Detail",
+    summaryAria: "Transaction summary",
+    detailsAria: "Transaction details",
+    actionsAria: "Transaction actions",
+    amount: "Amount",
+    status: "Status",
+    date: "Date",
+    validation: "Validation",
+    sectionParties: "Counterparties",
+    sectionTechnical: "Technical Details",
+    sectionReconciliation: "Reconciliation & Audit",
+    studentId: "Student ID",
+    source: "From (wallet)",
+    destination: "To (wallet)",
+    memo: "Memo",
+    txHash: "Transaction Hash",
+    copyHash: "Copy transaction hash",
+    asset: "Asset",
+    ledger: "Ledger",
+    feeCharged: "Network Fee",
+    syncedAt: "Synced At",
+    recordedBy: "Recorded By",
+    recordId: "Record ID",
+    notes: "Notes",
+  },
+
+  // ── Issue #107: Filter Chips ─────────────────────────────────────────────────
+  filterChips: {
+    activeLabel: "Filters",
+    activeFiltersAria: "Active filters",
+    chipListAria: "Active filter list",
+    activeFilterCount_one: "{{count}} active filter",
+    activeFilterCount_other: "{{count}} active filters",
+    removeAria: "Remove {{label}}: {{value}}",
+    clearAll: "Clear all",
+    clearAllAria: "Clear all filters",
+  },
+
+  // ── Issue #108: Confirm Dialog ───────────────────────────────────────────────
+  confirmDialog: {
+    typeToConfirm: "Type",
+    typeToConfirmSuffix: "to confirm",
+    typingMatched: "Confirmed — you may proceed",
+  },
+
+  // ── Issue #109: Role-aware nav ───────────────────────────────────────────────
+  // (keys added to the existing nav section; listed here for clarity)
+  // nav.adminRoleBadgeAria and nav.adminOnlyLinkAria are added inline below.
 
   exportJob: {
     queued: "Export queued — preparing your report…",
