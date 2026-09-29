@@ -940,6 +940,29 @@ table.data-table {
   animation: shimmer 1.6s infinite linear;
 }
 
+/* ── Pulse-style skeleton blocks (issue #13) ── */
+@keyframes skel-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+.skeleton-block {
+  border-radius: 4px;
+  background: var(--border);
+  animation: skel-pulse 1.4s ease-in-out infinite;
+}
+/* prefers-reduced-motion: drop animation, keep visual placeholder */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+/* Explicit opt-out class (JS sets this when it detects reduced-motion) */
+.skeleton-block.skeleton-static {
+  animation: none !important;
+  opacity: 0.6;
+}
+
 /* ══════════════════════════════════════════════════════════
    UTILITY
 ══════════════════════════════════════════════════════════ */
