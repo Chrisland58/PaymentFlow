@@ -16,9 +16,6 @@ rule_files:
   - "alerts/backup.yml"
   - "alerts/transaction_queue.yml"
   - "alerts/leader_election.yml"
-  - "alerts/admin-alerts.yml"
-  - "alerts/payment_processing_latency.yml"
-  - "alerts/heap_usage.yml"
   - "alerts/slo.yml"
 
 scrape_configs:
