@@ -32,7 +32,7 @@ Before you begin, ensure you have the following installed:
 
 ### First-Time Setup
 
-Follow the [Contributor Quick Start](docs/CONTRIBUTOR_QUICK_START.md) for the verified clone, dependency, environment, Docker, test, and first-change workflow. It also includes frontend and backend troubleshooting.
+Follow the [Contributor Quick Start](docs/CONTRIBUTOR_QUICK_START.md) for the verified clone, dependency, environment, Docker, test, and first-change workflow. It also covers frontend and backend troubleshooting.
 
 ---
 
