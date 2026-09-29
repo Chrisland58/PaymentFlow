@@ -8,14 +8,7 @@ import EmptyState from "../components/EmptyState";
 import PageHero from "../components/PageHero";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
-
-function formatTimestamp(isoString, t) {
-  if (!isoString) return t("auditLogs.notAvailable");
-  return new Date(isoString).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
+import TimestampDisplay, { DISPLAY_MODE } from "../components/TimestampDisplay";
 
 const ACTION_LABELS = {
   student_create:       "auditLogs.event.student_create",
@@ -408,7 +401,11 @@ function AuditLogsContent() {
                     return (
                       <tr key={log._id}>
                         <td style={{ whiteSpace: "nowrap", fontSize: "0.8125rem", color: "var(--text-muted)" }}>
-                          {formatTimestamp(log.createdAt, t)}
+                          <TimestampDisplay
+                            iso={log.createdAt}
+                            mode={DISPLAY_MODE.UTC}
+                            fallback={t("auditLogs.notAvailable")}
+                          />
                         </td>
                         <td style={{ fontWeight: 500, fontSize: "0.875rem" }}>{getActionLabel(log.action, t)}</td>
                         <td style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{log.performedBy}</td>

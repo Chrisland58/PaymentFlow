@@ -18,20 +18,13 @@ import {
   IconSearch, IconChevronLeft, IconChevronRight,
 } from "../components/Icons";
 import { DEFAULT_CLASS_OPTIONS, loadSchoolClassOptions } from "../utils/classOptions";
+import { formatRelative } from "../utils/dateTime";
 
 const DEFAULT_PAGE_SIZE = 20;
 
 function Dashboard() {
   const { t } = useTranslation();
-  const timeAgo = (iso) => {
-    if (!iso) return t("time.never");
-    const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
-    if (mins < 1) return t("time.justNow");
-    if (mins < 60) return t("time.minutesAgo", { mins });
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return t("time.hoursAgo", { hrs });
-    return new Date(iso).toLocaleDateString();
-  };
+  const timeAgo = (iso) => formatRelative(iso, t);
 
   const STATUS_BADGE = {
     paid:    { cls: "badge badge-success", label: t("status.student.paid") },
