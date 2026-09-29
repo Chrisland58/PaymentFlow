@@ -6,30 +6,26 @@ import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
 import SseDegradedBanner from "../components/SseDegradedBanner";
 import RequireAdmin from "../components/RequireAdmin";
+import EmptyState, { StandaloneEmptyState } from "../components/EmptyState";
 import BlockchainStatusBadge from "../components/BlockchainStatusBadge";
 import { TableDensityControl, useTableDensity } from "../components/TableDensityControl";
+import FilterChips from "../components/FilterChips"; // Issue #107
+import Pagination from "../components/Pagination";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
-import { useGridNavigation } from "../hooks/useGridNavigation";
+import { useRouteChangeAbort } from "../hooks/useRouteChangeAbort";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
 import {
   IconUsers, IconCheck, IconAlertTriangle, IconDollarSign,
   IconSearch, IconChevronLeft, IconChevronRight,
 } from "../components/Icons";
 import { DEFAULT_CLASS_OPTIONS, loadSchoolClassOptions } from "../utils/classOptions";
+import { formatRelative } from "../utils/dateTime";
 
-const PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 20;
 
 function Dashboard() {
   const { t } = useTranslation();
-  const timeAgo = (iso) => {
-    if (!iso) return t("time.never");
-    const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
-    if (mins < 1) return t("time.justNow");
-    if (mins < 60) return t("time.minutesAgo", { mins });
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return t("time.hoursAgo", { hrs });
-    return new Date(iso).toLocaleDateString();
-  };
+  const timeAgo = (iso) => formatRelative(iso, t);
 
   const STATUS_BADGE = {
     paid:    { cls: "badge badge-success", label: t("status.student.paid") },
@@ -48,6 +44,7 @@ function Dashboard() {
   const [page, setPage]                       = useState(1);
   const [pages, setPages]                     = useState(1);
   const [total, setTotal]                     = useState(0);
+  const [pageSize, setPageSize]               = useState(DEFAULT_PAGE_SIZE);
   const [search, setSearch]                   = useState("");
   const [statusFilter, setStatusFilter]       = useState("all");
   const [classFilter, setClassFilter]         = useState("");
@@ -61,29 +58,6 @@ function Dashboard() {
   // Set of student IDs whose detail row is currently expanded — Issue #113
   const [expandedRows, setExpandedRows] = useState(new Set());
 
-  // ── Keyboard grid navigation — Issue #10 ────────────────────────────────
-  const { tbodyRef, liveAnnouncement, handleKeyDown, getRowProps } = useGridNavigation({
-    rowCount: students.length,
-    disabled: studentsLoading || students.length === 0,
-    onActivate: (index) => {
-      const s = students[index];
-      if (s) handleRowClick(s.studentId);
-    },
-    getAnnouncement: (index) => {
-      const s = students[index];
-      if (!s) return "";
-      const st = (s.status || "unpaid").toLowerCase();
-      const badge = STATUS_BADGE[st] || STATUS_BADGE.unpaid;
-      return t("dashboard.gridRowAnnouncement", {
-        name: s.name,
-        id: s.studentId,
-        cls: s.class,
-        fee: s.feeAmount,
-        status: badge.label,
-      });
-    },
-  });
-
   // Real-time SSE — surfaces degraded/reconnecting/failed state (Issues #1054, #1078).
   const { degraded, connectionStatus } = usePaymentEvents({
     onEvent: (type) => {
@@ -94,6 +68,10 @@ function Dashboard() {
       }
     },
   });
+
+  // Issue #6 — abort page-level requests when the user navigates away.
+  // The returned signal is passed to fetchSummary / initial data loads below.
+  const { signal: routeSignal } = useRouteChangeAbort();
 
   const searchDebounceRef = useRef(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -110,11 +88,17 @@ function Dashboard() {
   const fetchSummary = useCallback(() => {
     setSummaryLoading(true);
     setSummaryError(null);
-    getPaymentSummary()
+    // Pass the route-change signal so navigation cancels the in-flight request
+    // without triggering an error toast (Issue #6).
+    getPaymentSummary({ signal: routeSignal })
       .then(({ data }) => setSummary(data))
-      .catch(() => setSummaryError(t("dashboard.failedToLoadSummary")))
+      .catch((err) => {
+        // Silently ignore requests cancelled by route change or AbortController.
+        if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
+        setSummaryError(t("dashboard.failedToLoadSummary"));
+      })
       .finally(() => setSummaryLoading(false));
-  }, [t]);
+  }, [t, routeSignal]);
 
   const fetchStudents = useCallback((p, srch, st, cls) => {
     // Cancel any in-flight student fetch before issuing a new one.
@@ -124,7 +108,7 @@ function Dashboard() {
 
     setStudentsLoading(true);
     setStudentsError(null);
-    getStudents(p, PAGE_SIZE, { search: srch, status: st, className: cls }, { signal: controller.signal })
+    getStudents(p, pageSize, { search: srch, status: st, className: cls }, { signal: controller.signal })
       .then(({ data }) => {
         setStudents(data.students);
         setPages(data.pages || 1);
@@ -141,7 +125,7 @@ function Dashboard() {
           setStudentsLoading(false);
         }
       });
-  }, [t]);
+  }, [t, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tracks whether the page effect is running for the very first time.
   // On mount the filter effect already calls fetchStudents(1, …), so the page
@@ -150,9 +134,14 @@ function Dashboard() {
   const isInitialPageRender = useRef(true);
 
   useEffect(() => {
-    getSyncStatus()
+    // Pass routeSignal so navigation cancels these page-level requests without
+    // triggering error toasts (Issue #6).
+    getSyncStatus({ signal: routeSignal })
       .then(({ data }) => setLastSyncAt(data.lastSyncAt))
-      .catch(() => setError(t("dashboard.failedToLoadSyncStatus")));
+      .catch((err) => {
+        if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
+        setError(t("dashboard.failedToLoadSyncStatus"));
+      });
     fetchSummary();
     loadSchoolClassOptions(getSchool, setClassOptions);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -161,6 +150,12 @@ function Dashboard() {
     setPage(1);
     fetchStudents(1, debouncedSearch, statusFilter, classFilter);
   }, [debouncedSearch, statusFilter, classFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When page size changes, reset to page 1 and refetch.
+  useEffect(() => {
+    setPage(1);
+    fetchStudents(1, debouncedSearch, statusFilter, classFilter);
+  }, [pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Skip the initial render — the filter effect above already fetched page 1.
@@ -337,22 +332,6 @@ function Dashboard() {
         .row-expanded td {
           background: var(--accent-subtle);
         }
-
-        /* ── Grid keyboard navigation — Issue #10 ────────── */
-        .grid-container:focus {
-          outline: none;
-        }
-        tr[data-grid-row]:focus {
-          outline: 2px solid var(--accent, #059669);
-          outline-offset: -2px;
-        }
-        tr[data-grid-row]:focus td {
-          background: var(--accent-subtle, rgba(5,150,105,0.06));
-        }
-        tr[data-grid-row]:focus-visible {
-          outline: 2px solid var(--accent, #059669);
-          outline-offset: -2px;
-        }
         .row-detail td {
           padding: 0.75rem 1rem;
           background: var(--bg-subtle, var(--bg));
@@ -391,10 +370,6 @@ function Dashboard() {
           {summaryError || studentsError}
         </div>
       )}
-      {/* Grid navigation live region — Issue #10 */}
-      <div aria-live="polite" aria-atomic="true" className="sr-only" aria-label={t("dashboard.gridNavigationHint")}>
-        {liveAnnouncement}
-      </div>
 
       <div className="page-wrap dash-wrap">
 
@@ -531,75 +506,90 @@ function Dashboard() {
             </div>
           </div>
 
+          {/* Filter chips — Issue #107 */}
+          {(() => {
+            const activeFilters = [
+              statusFilter && statusFilter !== "all"
+                ? { key: "status", label: t("dashboard.colStatus"), value: t(`status.student.${statusFilter}`) }
+                : null,
+              classFilter
+                ? { key: "className", label: t("dashboard.colClass"), value: classFilter }
+                : null,
+              debouncedSearch
+                ? { key: "search", label: t("dashboard.searchAria"), value: debouncedSearch }
+                : null,
+            ].filter(Boolean);
+            return activeFilters.length > 0 ? (
+              <div style={{ padding: "0 1.25rem" }}>
+                <FilterChips
+                  filters={activeFilters}
+                  onRemove={key => {
+                    if (key === "status")    setStatusFilter("all");
+                    if (key === "className") setClassFilter("");
+                    if (key === "search")    setSearch("");
+                  }}
+                  onClearAll={() => {
+                    setStatusFilter("all");
+                    setClassFilter("");
+                    setSearch("");
+                  }}
+                />
+              </div>
+            ) : null;
+          })()}
+
           {/* Table */}
           <ErrorBoundary>
             {studentsError ? (
               <div className="card-body">
-                <div role="alert" className="alert alert-danger">
-                  <span style={{ flex: 1 }}>{studentsError}</span>
-                  <button
-                    onClick={() => fetchStudents(page, debouncedSearch, statusFilter, classFilter)}
-                    className="btn btn-sm btn-ghost"
-                    style={{ color: "inherit", borderColor: "currentColor", opacity: 0.8 }}
-                  >
-                    {t("actions.retry")}
-                  </button>
-                </div>
+                <StandaloneEmptyState
+                    variant="error"
+                  title={t("dashboard.failedToLoadStudents")}
+                  description="Check your connection and try again."
+                  action={{ label: t("actions.retry"), onClick: () => fetchStudents(page, debouncedSearch, statusFilter, classFilter) }}
+                />
               </div>
             ) : (
-              <>
-                {/* sr-only grid navigation hint — Issue #10 */}
-                <p className="sr-only" id="dashboard-grid-hint">
-                  {t("dashboard.gridNavigationHint")}
-                </p>
-                <div
-                  className="grid-container"
-                  style={{ overflowX: "auto" }}
-                  aria-busy={studentsLoading}
+              <div style={{ overflowX: "auto" }} aria-busy={studentsLoading} aria-label={t("dashboard.studentTableAria")}>
+                <table
+                  className="data-table"
+                  data-density={density}
+                  aria-label={studentsLoading ? t("dashboard.studentsLoadingAria") : t("dashboard.studentTableAria")}
                 >
-                  <table
-                    role="grid"
-                    className="data-table"
-                    data-density={density}
-                    aria-label={studentsLoading ? t("dashboard.studentsLoadingAria") : t("dashboard.studentTableAria")}
-                    aria-rowcount={students.length + 1}
-                    aria-describedby="dashboard-grid-hint"
-                  >
                   <thead>
-                    <tr role="row" aria-rowindex={1}>
-                      <th scope="col" role="columnheader">{t("dashboard.colStudentId")}</th>
-                      <th scope="col" role="columnheader">{t("dashboard.colName")}</th>
-                      <th scope="col" className="col-hide-sm" role="columnheader">{t("dashboard.colClass")}</th>
-                      <th scope="col" className="col-hide-sm" role="columnheader">{t("dashboard.colFee")}</th>
-                      <th scope="col" className="col-hide-xs" role="columnheader">{t("dashboard.colStatus")}</th>
-                      <th scope="col" role="columnheader"></th>
+                    <tr>
+                      <th scope="col">{t("dashboard.colStudentId")}</th>
+                      <th scope="col">{t("dashboard.colName")}</th>
+                      <th scope="col" className="col-hide-sm">{t("dashboard.colClass")}</th>
+                      <th scope="col" className="col-hide-sm">{t("dashboard.colFee")}</th>
+                      <th scope="col" className="col-hide-xs">{t("dashboard.colStatus")}</th>
+                      <th scope="col"></th>
                     </tr>
                   </thead>
-                  <tbody ref={tbodyRef} onKeyDown={handleKeyDown}>
+                  <tbody>
                     {studentsLoading ? (
                       Array.from({ length: 6 }).map((_, i) => (
-                        <tr key={i} role="row">
-                          <td role="gridcell"><div className="skel-block" style={{ height: 12, width: 72 }} /></td>
-                          <td role="gridcell"><div className="skel-block" style={{ height: 12, width: 130 }} /></td>
-                          <td className="col-hide-sm" role="gridcell"><div className="skel-block" style={{ height: 12, width: 44 }} /></td>
-                          <td className="col-hide-sm" role="gridcell"><div className="skel-block" style={{ height: 12, width: 56 }} /></td>
-                          <td className="col-hide-xs" role="gridcell"><div className="skel-block" style={{ height: 20, width: 52, borderRadius: 20 }} /></td>
-                          <td role="gridcell"><div className="skel-block" style={{ height: 28, width: 42, borderRadius: 6 }} /></td>
+                        <tr key={i}>
+                          <td><div className="skel-block" style={{ height: 12, width: 72 }} /></td>
+                          <td><div className="skel-block" style={{ height: 12, width: 130 }} /></td>
+                          <td className="col-hide-sm"><div className="skel-block" style={{ height: 12, width: 44 }} /></td>
+                          <td className="col-hide-sm"><div className="skel-block" style={{ height: 12, width: 56 }} /></td>
+                          <td className="col-hide-xs"><div className="skel-block" style={{ height: 20, width: 52, borderRadius: 20 }} /></td>
+                          <td><div className="skel-block" style={{ height: 28, width: 42, borderRadius: 6 }} /></td>
                         </tr>
                       ))
                     ) : students.length === 0 ? (
-                      <tr role="row">
-                        <td colSpan="6" role="gridcell">
-                          <div className="empty-state">
-                            <div className="empty-state-icon"><IconSearch size={26} /></div>
-                            <div className="empty-state-title">{t("dashboard.emptyTitle")}</div>
-                            <div className="empty-state-desc">
-                              {search || statusFilter !== "all" || classFilter ? t("dashboard.emptyFilters") : t("dashboard.emptyNone")}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : students.map((s, rowIdx) => {
+                      <EmptyState
+                        variant={search || statusFilter !== "all" || classFilter ? "filtered" : "empty"}
+                        colSpan={6}
+                        title={search || statusFilter !== "all" || classFilter ? t("dashboard.emptyTitle") : "No students yet"}
+                        description={search || statusFilter !== "all" || classFilter ? t("dashboard.emptyFilters") : t("dashboard.emptyNone")}
+                        action={search || statusFilter !== "all" || classFilter ? {
+                          label: "Clear filters",
+                          onClick: () => { setSearch(""); setStatusFilter("all"); setClassFilter(""); }
+                        } : undefined}
+                      />
+                    ) : students.map(s => {
                       const st = (s.status || "unpaid").toLowerCase();
                       const badge = STATUS_BADGE[st] || STATUS_BADGE.unpaid;
                       const isExpanded = expandedRows.has(s.studentId);
@@ -607,24 +597,24 @@ function Dashboard() {
                         <>
                           <tr
                             key={s.studentId}
-                            role="row"
                             className={`row-clickable${isExpanded ? " row-expanded" : ""}`}
                             onClick={() => handleRowClick(s.studentId)}
                             aria-expanded={isExpanded}
                             aria-label={isExpanded ? t("dashboard.collapseRow") : t("dashboard.expandRow")}
-                            {...getRowProps(rowIdx)}
+                            tabIndex={0}
+                            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(s.studentId); } }}
                           >
-                            <td className="col-mono" role="gridcell">{s.studentId}</td>
-                            <td className="student-row-name" role="gridcell">{s.name}</td>
-                            <td className="student-row-class col-hide-sm" role="gridcell">{s.class}</td>
-                            <td className="student-row-fee col-hide-sm" role="gridcell">
+                            <td className="col-mono">{s.studentId}</td>
+                            <td className="student-row-name">{s.name}</td>
+                            <td className="student-row-class col-hide-sm">{s.class}</td>
+                            <td className="student-row-fee col-hide-sm">
                               <span style={{ fontVariantNumeric: "tabular-nums" }}>{s.feeAmount}</span>
                               <span style={{ marginLeft: "0.25rem", fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600 }}>XLM</span>
                             </td>
-                            <td className="col-hide-xs" role="gridcell">
+                            <td className="col-hide-xs">
                               <span className={badge.cls}>{badge.label}</span>
                             </td>
-                            <td role="gridcell">
+                            <td>
                               <button
                                 onClick={e => { e.stopPropagation(); handleEditStudent(s); }}
                                 className="btn btn-sm btn-ghost"
@@ -634,8 +624,8 @@ function Dashboard() {
                             </td>
                           </tr>
                           {isExpanded && (
-                            <tr key={`${s.studentId}-detail`} className="row-detail" role="row">
-                              <td colSpan="6" role="gridcell">
+                            <tr key={`${s.studentId}-detail`} className="row-detail">
+                              <td colSpan="6">
                                 <div className="row-detail-grid" aria-label={t("dashboard.expandedDetails")}>
                                   <div className="row-detail-item">
                                     <span className="row-detail-label">{t("dashboard.colStudentId")}</span>
@@ -681,40 +671,21 @@ function Dashboard() {
                   </tbody>
                 </table>
               </div>
-            </>
             )}
           </ErrorBoundary>
 
           {/* Pagination */}
           {total > 0 && (
-            <div style={{ padding: "0.875rem 1.25rem", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
-              <span className="pagination-info" aria-live="polite" aria-atomic="true">
-                {studentsLoading ? t("actions.loading") : t("dashboard.rangeOf", { start: rangeStart, end: rangeEnd, total: total.toLocaleString() })}
-              </span>
-              <nav className="pagination-controls" aria-label={t("dashboard.paginationAria")}>
-                <button
-                  className="page-btn"
-                  disabled={page === 1 || studentsLoading}
-                  onClick={() => setPage(p => p - 1)}
-                  aria-label={t("actions.previousPage")}
-                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
-                >
-                  <IconChevronLeft size={15} /> {t("actions.prev")}
-                </button>
-                <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)", padding: "0 0.25rem" }} aria-current="page">
-                  {page} / {pages}
-                </span>
-                <button
-                  className="page-btn"
-                  disabled={page === pages || studentsLoading}
-                  onClick={() => setPage(p => p + 1)}
-                  aria-label={t("actions.nextPage")}
-                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
-                >
-                  {t("actions.next")} <IconChevronRight size={15} />
-                </button>
-              </nav>
-            </div>
+            <Pagination
+              page={page}
+              pages={pages}
+              total={total}
+              pageSize={pageSize}
+              pageSizeOptions={[10, 20, 50]}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => setPageSize(size)}
+              loading={studentsLoading}
+            />
           )}
         </div>
       </div>

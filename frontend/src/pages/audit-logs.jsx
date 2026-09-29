@@ -4,18 +4,11 @@ import { getErrorMessage } from "../utils/errorMessages";
 import {
   IconChevronLeft, IconChevronRight, IconAlertTriangle, IconCheck,
 } from "../components/Icons";
+import EmptyState from "../components/EmptyState";
 import PageHero from "../components/PageHero";
 import RequireAdmin from "../components/RequireAdmin";
 import { useTranslation } from "react-i18next";
-import { useGridNavigation } from "../hooks/useGridNavigation";
-
-function formatTimestamp(isoString, t) {
-  if (!isoString) return t("auditLogs.notAvailable");
-  return new Date(isoString).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
+import TimestampDisplay, { DISPLAY_MODE } from "../components/TimestampDisplay";
 
 const ACTION_LABELS = {
   student_create:       "auditLogs.event.student_create",
@@ -68,26 +61,6 @@ function AuditLogsContent() {
     const t = setTimeout(() => setSearchFilter(searchInput.trim()), 350);
     return () => clearTimeout(t);
   }, [searchInput]);
-
-  // ── Keyboard grid navigation — Issue #10 ──────────────────────────────
-  const { tbodyRef, liveAnnouncement, handleKeyDown, getRowProps } = useGridNavigation({
-    rowCount: logs.length,
-    disabled: loading || logs.length === 0,
-    onActivate: (index) => {
-      const log = logs[index];
-      if (log) setExpandedId(expandedId === log._id ? null : log._id);
-    },
-    getAnnouncement: (index) => {
-      const log = logs[index];
-      if (!log) return "";
-      return t("auditLogs.gridRowAnnouncement", {
-        timestamp: formatTimestamp(log.createdAt, t),
-        action: getActionLabel(log.action, t),
-        actor: log.performedBy,
-        result: log.result === "success" ? t("auditLogs.resultSuccess") : t("auditLogs.resultFailure"),
-      });
-    },
-  });
 
   const fetchLogs = (cursor = null) => {
     const isLoadMore = cursor !== null && cursor !== undefined;
@@ -223,25 +196,7 @@ function AuditLogsContent() {
         .al-expand-btn:hover { background: var(--bg-subtle, var(--bg)); }
         .al-result-badge-success { background: var(--success-bg); color: var(--success-text); }
         .al-result-badge-failure { background: var(--danger-bg);  color: var(--danger-text);  }
-
-        /* ── Grid keyboard navigation — Issue #10 ────────── */
-        tr[data-grid-row]:focus {
-          outline: 2px solid var(--accent, #059669);
-          outline-offset: -2px;
-        }
-        tr[data-grid-row]:focus td {
-          background: var(--accent-subtle, rgba(5,150,105,0.06));
-        }
-        tr[data-grid-row]:focus-visible {
-          outline: 2px solid var(--accent, #059669);
-          outline-offset: -2px;
-        }
       `}</style>
-
-      {/* Grid navigation live region — Issue #10 */}
-      <div aria-live="polite" aria-atomic="true" className="sr-only">
-        {liveAnnouncement}
-      </div>
 
       <div className="page-wrap-wide">
         <PageHero
@@ -343,91 +298,130 @@ function AuditLogsContent() {
             </div>
           </div>
 
-          {/* Alerts */}
-          {error && (
-            <div className="card-body">
-              <div role="alert" className="alert alert-danger">
-                <IconAlertTriangle size={16} />
-                <span>{error}</span>
-              </div>
-            </div>
-          )}
+          {/* Table — loading / error / empty / data */}
+          {(() => {
+            const hasActiveFilters = !!(actionFilter || targetTypeFilter || resultFilter || actorIdFilter || searchFilter || startDate || endDate);
 
-          {/* sr-only grid navigation hint — Issue #10 */}
-          <p className="sr-only" id="audit-grid-hint">
-            {t("auditLogs.gridNavigationHint")}
-          </p>
+            if (error) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("auditLogs.colTimestamp")}</th>
+                        <th scope="col">{t("auditLogs.colAction")}</th>
+                        <th scope="col">{t("auditLogs.colPerformedBy")}</th>
+                        <th scope="col">{t("auditLogs.colTarget")}</th>
+                        <th scope="col">{t("auditLogs.colResult")}</th>
+                        <th scope="col">{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState
+                        variant="error"
+                        colSpan={6}
+                        title={t("auditLogs.failedToLoad")}
+                        description="Check your connection and try again."
+                        action={{ label: t("actions.retry"), onClick: () => fetchLogs(null) }}
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
 
-          {/* Table */}
-          {loading ? (
+            if (loading) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-busy="true" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th>{t("auditLogs.colTimestamp")}</th><th>{t("auditLogs.colAction")}</th><th>{t("auditLogs.colPerformedBy")}</th>
+                        <th>{t("auditLogs.colTarget")}</th><th>{t("auditLogs.colResult")}</th><th>{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState variant="loading" colSpan={6} />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            if (logs.length === 0) {
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table" aria-label={t("auditLogs.title")}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("auditLogs.colTimestamp")}</th>
+                        <th scope="col">{t("auditLogs.colAction")}</th>
+                        <th scope="col">{t("auditLogs.colPerformedBy")}</th>
+                        <th scope="col">{t("auditLogs.colTarget")}</th>
+                        <th scope="col">{t("auditLogs.colResult")}</th>
+                        <th scope="col">{t("auditLogs.colDetails")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <EmptyState
+                        variant={hasActiveFilters ? "filtered" : "empty"}
+                        colSpan={6}
+                        title={hasActiveFilters ? t("auditLogs.noLogsFound") : "No audit logs yet"}
+                        description={hasActiveFilters ? t("auditLogs.emptyFilters") : "Audit events will appear here once activity is recorded."}
+                        action={hasActiveFilters ? {
+                          label: "Clear filters",
+                          onClick: () => {
+                            setActionFilter(""); setTargetTypeFilter(""); setResultFilter("");
+                            setActorIdInput(""); setSearchInput(""); setStartDate(""); setEndDate("");
+                          }
+                        } : undefined}
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            return (
             <div style={{ overflowX: "auto" }}>
-              <table role="grid" className="data-table">
+              <table className="data-table">
                 <thead>
-                  <tr role="row" aria-rowindex={1}>
-                    <th scope="col" role="columnheader">{t("auditLogs.colTimestamp")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colAction")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colPerformedBy")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colTarget")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colResult")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colDetails")}</th>
+                  <tr>
+                    <th scope="col">{t("auditLogs.colTimestamp")}</th>
+                    <th scope="col">{t("auditLogs.colAction")}</th>
+                    <th scope="col">{t("auditLogs.colPerformedBy")}</th>
+                    <th scope="col">{t("auditLogs.colTarget")}</th>
+                    <th scope="col">{t("auditLogs.colResult")}</th>
+                    <th scope="col">{t("auditLogs.colDetails")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} role="row">
-                      {[100,140,80,120,60,40].map((w, j) => (
-                        <td key={j} role="gridcell"><div className="skeleton" style={{ height: 12, width: w }} /></td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : logs.length === 0 ? (
-            <div className="al-empty">
-              <p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>{t("auditLogs.noLogsFound")}</p>
-              <p style={{ fontSize: "0.8125rem" }}>{t("auditLogs.emptyFilters")}</p>
-            </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table role="grid" className="data-table" aria-rowcount={logs.length + 1} aria-describedby="audit-grid-hint">
-                <thead>
-                  <tr role="row" aria-rowindex={1}>
-                    <th scope="col" role="columnheader">{t("auditLogs.colTimestamp")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colAction")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colPerformedBy")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colTarget")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colResult")}</th>
-                    <th scope="col" role="columnheader">{t("auditLogs.colDetails")}</th>
-                  </tr>
-                </thead>
-                <tbody ref={tbodyRef} onKeyDown={handleKeyDown}>
-                  {logs.map((log, rowIdx) => {
+                  {logs.map((log) => {
                     const isExpanded = expandedId === log._id;
                     return (
-                      <tr
-                        key={log._id}
-                        role="row"
-                        {...getRowProps(rowIdx)}
-                      >
-                        <td role="gridcell" style={{ whiteSpace: "nowrap", fontSize: "0.8125rem", color: "var(--text-muted)" }}>
-                          {formatTimestamp(log.createdAt, t)}
+                      <tr key={log._id}>
+                        <td style={{ whiteSpace: "nowrap", fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                          <TimestampDisplay
+                            iso={log.createdAt}
+                            mode={DISPLAY_MODE.UTC}
+                            fallback={t("auditLogs.notAvailable")}
+                          />
                         </td>
-                        <td role="gridcell" style={{ fontWeight: 500, fontSize: "0.875rem" }}>{getActionLabel(log.action, t)}</td>
-                        <td role="gridcell" style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{log.performedBy}</td>
-                        <td role="gridcell">
+                        <td style={{ fontWeight: 500, fontSize: "0.875rem" }}>{getActionLabel(log.action, t)}</td>
+                        <td style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{log.performedBy}</td>
+                        <td>
                           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.25rem" }}>
                             <span className="al-target-badge">{log.targetType}</span>
                             <span className="font-mono" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{log.targetId}</span>
                           </div>
                         </td>
-                        <td role="gridcell">
+                        <td>
                           <span className={`badge ${log.result === "success" ? "badge-success" : "badge-danger"}`}>
                             {log.result === "success" ? <IconCheck size={10} /> : <IconAlertTriangle size={10} />}
                             {log.result === "success" ? t("auditLogs.resultSuccess") : t("auditLogs.resultFailure")}
                           </span>
                         </td>
-                        <td role="gridcell">
+                        <td>
                           {log.errorMessage ? (
                             <span style={{ color: "var(--danger-text)", fontSize: "0.8125rem" }}>
                               {log.errorMessage}
@@ -455,7 +449,8 @@ function AuditLogsContent() {
                 </tbody>
               </table>
             </div>
-          )}
+          );
+          })()}
 
           {/* Pagination */}
           {!loading && nextCursor && (
@@ -494,7 +489,7 @@ function AuditLogsContent() {
   );
 }
 
-export default function AuditLogs() {
+export default function AuditLogsPage() {
   return (
     <RequireAdmin>
       <AuditLogsContent />

@@ -398,8 +398,6 @@ const fr = {
     resultSuccess: "Succès",
     resultFailure: "Échec",
     noLogsFound: "Aucun journal d'audit trouvé",
-    gridRowAnnouncement: "{{timestamp}}, action {{action}}, par {{actor}}, résultat {{result}}",
-    gridNavigationHint: "Utilisez les flèches pour naviguer. Entrée ou Espace pour voir les détails.",
     event: {
       student_create: "Étudiant créé",
       student_update: "Étudiant mis à jour",
@@ -650,8 +648,6 @@ const fr = {
     expandRow: "Développer les détails de la ligne",
     collapseRow: "Réduire les détails de la ligne",
     expandedDetails: "Détails",
-    gridRowAnnouncement: "Élève {{name}}, ID {{id}}, classe {{cls}}, frais {{fee}} XLM, statut {{status}}",
-    gridNavigationHint: "Utilisez les flèches pour naviguer. Entrée ou Espace pour développer ou réduire.",
   },
   fees: {
     eyebrow: "Administration",
@@ -748,18 +744,12 @@ const fr = {
 
   errorBoundary: {
     title: "Une erreur est survenue",
-    body: "Une erreur inattendue s'est produite. Vous pouvez réessayer ou revenir en arrière.",
+    body: "Une erreur inattendue s'est produite. Vous pouvez recharger la page ou revenir en arrière.",
     reload: "Recharger la page",
-    retry: "Réessayer",
     goBack: "Retour",
     goHome: "Accueil",
+    retry: "Réessayer",
     correlationId: "Référence : {{id}}",
-  },
-
-  grid: {
-    rowAnnouncement: "Ligne {{index}} sur {{total}}",
-    gridLabel: "Grille de données",
-    navigationHint: "Utilisez les touches fléchées pour naviguer. Appuyez sur Entrée ou Espace pour activer.",
   },
 
   paymentPlan: {
