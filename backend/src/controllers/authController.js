@@ -730,6 +730,27 @@ async function handleRevokeSession(req, res) {
     await store.revokeFamily(sess.familyId, refreshTTL).catch(() => logger.debug('[AuthController] revokeFamily in handleRevokeSession missed'));
   }
   await store.delSession(sessionId).catch(() => logger.debug('[AuthController] delSession in handleRevokeSession missed'));
+
+  // Audit: session revocation is a privileged security mutation
+  try {
+    const { logAudit } = require('../services/auditService');
+    const performedBy = req.admin?.email || req.admin?.userId || 'unknown';
+    await logAudit({
+      schoolId:    req.admin?.schoolId || 'system',
+      action:      'session_revoked',
+      performedBy,
+      targetId:    sessionId,
+      targetType:  'session',
+      details:     { revokedUserId: sess.userId || null },
+      result:      'success',
+      ipAddress:   req.ip || null,
+      userAgent:   req.get('user-agent') || null,
+      severity:    'high',
+    });
+  } catch (auditErr) {
+    logger.warn('[AuthController] Failed to write session_revoked audit entry', { error: auditErr.message });
+  }
+
   return res.json({ message: 'Session revoked.' });
 }
 
@@ -808,6 +829,25 @@ async function handleChangePassword(req, res) {
 
   const currentValid = Boolean(currentPassword) && await bcrypt.compare(currentPassword, user.passwordHash);
   if (!currentValid) {
+    // Audit failed attempt without exposing the submitted password
+    try {
+      const { logAudit } = require('../services/auditService');
+      await logAudit({
+        schoolId:    req.admin?.schoolId || 'system',
+        action:      'password_change',
+        performedBy: userId,
+        targetId:    userId,
+        targetType:  'user',
+        details:     {},
+        result:      'failure',
+        errorMessage: 'Invalid current password',
+        ipAddress:   req.ip || null,
+        userAgent:   req.get('user-agent') || null,
+        severity:    'high',
+      });
+    } catch (auditErr) {
+      logger.warn('[AuthController] Failed to write password_change audit entry', { error: auditErr.message });
+    }
     return res.status(401).json({ error: 'Current password is incorrect.', code: 'INVALID_CREDENTIALS' });
   }
 
@@ -837,6 +877,26 @@ async function handleChangePassword(req, res) {
   const cookieBase = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' };
   res.clearCookie(ACCESS_COOKIE, { ...cookieBase, path: '/' });
   res.clearCookie(REFRESH_COOKIE, { ...cookieBase, path: REFRESH_COOKIE_PATH });
+
+  // Audit: password change is a high-severity privileged mutation
+  try {
+    const { logAudit } = require('../services/auditService');
+    await logAudit({
+      schoolId:    req.admin?.schoolId || 'system',
+      action:      'password_change',
+      performedBy: userId,
+      targetId:    userId,
+      targetType:  'user',
+      // Never log old or new password hash values
+      details:     { sessionsRevoked: true },
+      result:      'success',
+      ipAddress:   req.ip || null,
+      userAgent:   req.get('user-agent') || null,
+      severity:    'high',
+    });
+  } catch (auditErr) {
+    logger.warn('[AuthController] Failed to write password_change audit entry', { error: auditErr.message });
+  }
 
   return res.json({ message: 'Password changed. All sessions have been invalidated. Please log in again.' });
 }
