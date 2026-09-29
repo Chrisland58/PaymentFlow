@@ -9,6 +9,20 @@ const {
   FONT_SRC_ORIGINS,
 } = require('./src/config/cspSources');
 
+// Bundle analysis: set ANALYZE=true to open an interactive Webpack bundle
+// visualiser after `npm run build`.  In CI the visualiser is disabled; the
+// bundle-budget.js script reads the build manifest directly instead.
+const withBundleAnalyzer = (() => {
+  try {
+    // eslint-disable-next-line import/no-extraneous-dependencies
+    return require('@next/bundle-analyzer')({ enabled: process.env.ANALYZE === 'true' });
+  } catch {
+    // @next/bundle-analyzer is an optional dev-dependency; if it is not
+    // installed (e.g. in a minimal Docker image) skip the wrapper entirely.
+    return (cfg) => cfg;
+  }
+})();
+
 const isDev = process.env.NODE_ENV !== 'production';
 
 // Origin of the backend API (scheme://host:port), derived from the public API
@@ -86,4 +100,4 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+module.exports = withBundleAnalyzer(nextConfig);
