@@ -1,49 +1,32 @@
-/**
- * Navbar — Issue #109 role-aware navigation affordances
- *
- * Changes from the base implementation:
- * 1. Admin-only links are completely omitted for non-admin users (no leakage).
- * 2. A subtle "Admin" role badge appears next to the brand when authenticated
- *    as an admin, so the user knows which capability set is active.
- * 3. A visual section divider separates PUBLIC_LINKS from ADMIN_LINKS in the
- *    desktop nav so admins can distinguish general vs. admin-only areas at a
- *    glance.
- * 4. Admin-only links receive an `aria-description` noting they require admin
- *    access, improving screen-reader context for admins.
- * 5. The mobile menu mirrors the same role-based omission and divider.
- * 6. The "Admin Login" CTA is only shown to unauthenticated users; admins see
- *    their role badge and a sign-out button instead — consistent, no confusion.
- */
-
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import TestnetBanner from "./TestnetBanner";
+import NotificationCenter from "./NotificationCenter";
 import { useTheme } from "../pages/_app";
 import { useAdminAuthContext } from "../hooks/AdminAuthContext";
 import { SUPPORTED_LOCALES, LOCALE_NAMES } from "../i18n";
 
 const PUBLIC_LINKS = [
-  { href: "/pay-fees",  i18nKey: "nav.payFees",   adminOnly: false },
-  { href: "/dashboard", i18nKey: "nav.dashboard", adminOnly: false },
-  { href: "/reports",   i18nKey: "nav.reports",   adminOnly: false },
+  { href: "/pay-fees",  i18nKey: "nav.payFees" },
+  { href: "/dashboard", i18nKey: "nav.dashboard" },
+  { href: "/reports",   i18nKey: "nav.reports" },
 ];
 
-/**
- * ADMIN_LINKS are completely hidden from non-admin users.
- * They are never rendered in the DOM so unauthenticated users have no
- * visual or source-code hint that these routes exist.
- */
 const ADMIN_LINKS = [
-  { href: "/fee-adjustments", i18nKey: "nav.feeRules",   adminOnly: true },
-  { href: "/audit-logs",      i18nKey: "nav.auditLogs",  adminOnly: true },
-  { href: "/disputes",        i18nKey: "nav.disputes",   adminOnly: true },
-  { href: "/webhooks",        i18nKey: "nav.webhooks",   adminOnly: true },
+  { href: "/fee-adjustments", i18nKey: "nav.feeRules" },
+  { href: "/audit-logs",      i18nKey: "nav.auditLogs" },
+  { href: "/disputes",        i18nKey: "nav.disputes" },
+  { href: "/webhooks",        i18nKey: "nav.webhooks" },
 ];
+
+// Focusable elements we allow inside the mobile menu trap
+const FOCUSABLE_SELECTORS =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const SunIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
     <circle cx="12" cy="12" r="5"/>
     <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
     <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
@@ -53,7 +36,7 @@ const SunIcon = () => (
 );
 
 const MoonIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
   </svg>
 );
@@ -64,14 +47,75 @@ export default function Navbar() {
   const { t, i18n } = useTranslation();
   const { dark, toggle } = useTheme();
   const { isAdmin, logout } = useAdminAuthContext();
+  const links = isAdmin ? [...PUBLIC_LINKS, ...ADMIN_LINKS] : PUBLIC_LINKS;
 
-  // Role-aware link resolution (#109):
-  // Admin-only links are completely omitted for non-admin users — they are
-  // never rendered in the DOM so there is no visible or source-level hint.
-  const publicLinks = PUBLIC_LINKS;
-  const adminLinks  = isAdmin ? ADMIN_LINKS : [];
+  const hamburgerRef = useRef(null);
+  const mobileMenuRef = useRef(null);
 
+  // Close menu on route change
   useEffect(() => { setOpen(false); }, [pathname]);
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        hamburgerRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
+
+  // Focus trap: keep Tab/Shift+Tab inside the open mobile menu
+  useEffect(() => {
+    if (!open || !mobileMenuRef.current) return;
+
+    const menu = mobileMenuRef.current;
+    const getFocusable = () =>
+      Array.from(menu.querySelectorAll(FOCUSABLE_SELECTORS)).filter(
+        (el) => !el.closest("[aria-hidden='true']")
+      );
+
+    const handleTrap = (e) => {
+      if (e.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    menu.addEventListener("keydown", handleTrap);
+    // Move focus into the menu when it opens
+    const focusable = getFocusable();
+    if (focusable.length > 0) focusable[0].focus();
+
+    return () => menu.removeEventListener("keydown", handleTrap);
+  }, [open]);
+
+  // Prevent body scroll while menu is open
+  useEffect(() => {
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    hamburgerRef.current?.focus();
+  }, []);
 
   return (
     <>
@@ -84,6 +128,8 @@ export default function Navbar() {
           top: 0;
           z-index: 200;
           backdrop-filter: saturate(140%);
+          /* Prevent the navbar itself from scrolling horizontally */
+          overflow: hidden;
         }
         .nav-inner {
           max-width: 1280px;
@@ -119,27 +165,13 @@ export default function Navbar() {
           letter-spacing: -0.02em;
           white-space: nowrap;
         }
-        /* Role badge shown next to brand when logged in as admin (#109) */
-        .nav-role-badge {
-          display: inline-flex;
-          align-items: center;
-          padding: 0.15rem 0.45rem;
-          border-radius: 4px;
-          background: rgba(5, 150, 105, 0.22);
-          border: 1px solid rgba(52, 211, 153, 0.3);
-          color: #34d399;
-          font-size: 0.62rem;
-          font-weight: 700;
-          letter-spacing: 0.07em;
-          text-transform: uppercase;
-          white-space: nowrap;
-          flex-shrink: 0;
-        }
         .nav-links {
           display: flex;
           align-items: center;
           gap: 0.125rem;
           flex: 1;
+          /* Wrap rather than overflow on narrow desktops */
+          flex-wrap: wrap;
         }
         .nav-link {
           color: rgba(255, 255, 255, 0.5);
@@ -153,26 +185,9 @@ export default function Navbar() {
         }
         .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
         .nav-link.active { color: #fff; background: rgba(255, 255, 255, 0.1); font-weight: 600; }
-        /* Section divider between public and admin nav groups (#109) */
-        .nav-section-divider {
-          width: 1px;
-          height: 20px;
-          background: rgba(255, 255, 255, 0.12);
-          margin: 0 0.25rem;
-          flex-shrink: 0;
-          align-self: center;
-        }
-        /* Subtle accent on admin-only links so admins can tell at a glance (#109) */
-        .nav-link-admin {
-          color: rgba(52, 211, 153, 0.65);
-        }
-        .nav-link-admin:hover {
-          color: #34d399;
-          background: rgba(5, 150, 105, 0.14);
-        }
-        .nav-link-admin.active {
-          color: #34d399;
-          background: rgba(5, 150, 105, 0.18);
+        .nav-link:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: 2px;
         }
         .nav-right { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
         .nav-theme-btn {
@@ -192,6 +207,10 @@ export default function Navbar() {
           border-color: rgba(255, 255, 255, 0.2);
           color: #fff;
         }
+        .nav-theme-btn:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: 2px;
+        }
         .nav-pill {
           display: inline-flex; align-items: center;
           background: transparent;
@@ -209,6 +228,10 @@ export default function Navbar() {
           border-color: rgba(255, 255, 255, 0.3);
           color: #fff;
           background: rgba(255, 255, 255, 0.06);
+        }
+        .nav-pill:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: 2px;
         }
         .nav-pill-accent {
           background: linear-gradient(135deg, #059669 0%, #0d9488 100%);
@@ -237,11 +260,15 @@ export default function Navbar() {
           background: rgba(255, 255, 255, 0.12);
           border-color: rgba(255, 255, 255, 0.22);
         }
+        .nav-lang:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: 2px;
+        }
         .nav-hamburger {
           display: none;
           align-items: center;
           justify-content: center;
-          width: 32px; height: 32px;
+          width: 36px; height: 36px;
           background: rgba(255, 255, 255, 0.06);
           border: 1px solid rgba(255, 255, 255, 0.1);
           border-radius: 7px;
@@ -250,96 +277,174 @@ export default function Navbar() {
           font-size: 1.1rem;
           line-height: 1;
         }
-        .nav-mobile {
-          display: none;
-          flex-direction: column;
-          background: #0c1525;
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
-          padding: 0.5rem 1rem 1rem;
-          gap: 0.125rem;
+        .nav-hamburger:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: 2px;
         }
-        .nav-mobile.open { display: flex; }
+
+        /* ── Mobile overlay backdrop ───────────────────── */
+        .nav-mobile-backdrop {
+          display: none;
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.55);
+          z-index: 198;
+          backdrop-filter: blur(2px);
+        }
+        .nav-mobile-backdrop.open { display: block; }
+
+        /* ── Mobile drawer ────────────────────────────── */
+        .nav-mobile {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: min(320px, 88vw);
+          height: 100dvh;
+          background: #0c1525;
+          border-right: 1px solid rgba(255, 255, 255, 0.08);
+          z-index: 199;
+          display: flex;
+          flex-direction: column;
+          padding: 0;
+          transform: translateX(-100%);
+          transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+          /* No horizontal scroll inside the drawer */
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+        .nav-mobile.open {
+          transform: translateX(0);
+        }
+        .nav-mobile-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 1rem 1.25rem;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+          flex-shrink: 0;
+        }
+        .nav-mobile-close {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px; height: 32px;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 7px;
+          cursor: pointer;
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 1rem;
+        }
+        .nav-mobile-close:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: 2px;
+        }
+        .nav-mobile-body {
+          flex: 1;
+          padding: 0.75rem 0.75rem 1.5rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.125rem;
+          overflow-y: auto;
+          overflow-x: hidden;
+        }
+        .nav-mobile-section {
+          padding: 0.75rem 0.5rem 0.25rem;
+          font-size: 0.62rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          color: rgba(255, 255, 255, 0.3);
+        }
+        .nav-mobile-link {
+          display: flex;
+          align-items: center;
+          gap: 0.625rem;
+          padding: 0.7rem 0.875rem;
+          border-radius: 9px;
+          color: rgba(255, 255, 255, 0.6);
+          font-size: 0.9rem;
+          font-weight: 500;
+          text-decoration: none;
+          transition: color 0.12s, background 0.12s;
+        }
+        .nav-mobile-link:hover  { color: #fff; background: rgba(255,255,255,0.08); }
+        .nav-mobile-link.active { color: #fff; background: rgba(255,255,255,0.12); font-weight: 600; }
+        .nav-mobile-link:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: -2px;
+        }
         .nav-mobile-divider {
           height: 1px;
           background: rgba(255,255,255,0.07);
           margin: 0.5rem 0;
         }
-        /* Mobile admin section label (#109) */
-        .nav-mobile-section-label {
-          font-size: 0.6rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: rgba(52, 211, 153, 0.55);
-          padding: 0.375rem 0.7rem 0.1rem;
-          pointer-events: none;
-          user-select: none;
+        .nav-mobile-footer {
+          padding: 0.875rem 1.25rem 1.25rem;
+          border-top: 1px solid rgba(255, 255, 255, 0.07);
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          flex-shrink: 0;
         }
+        .nav-mobile-footer-row {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .nav-mobile-lang {
+          flex: 1;
+          appearance: none;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 7px;
+          color: rgba(255, 255, 255, 0.8);
+          font: 500 0.85rem/1 inherit;
+          padding: 0.5rem 0.625rem;
+          cursor: pointer;
+          outline: none;
+        }
+        .nav-mobile-lang:focus-visible {
+          outline: 2px solid #34d399;
+          outline-offset: 2px;
+        }
+
         @media (max-width: 720px) {
           .nav-links { display: none; }
           .nav-hamburger { display: flex; }
-          .nav-lang { max-width: 130px; }
-          .nav-role-badge { display: none; }
+          /* Ensure the navbar bar itself never causes horizontal scroll */
+          .nav-inner { gap: 0.75rem; }
+        }
+
+        /* Very narrow screens: shrink brand name */
+        @media (max-width: 380px) {
+          .nav-name { display: none; }
+          .nav-inner { padding: 0 1rem; }
         }
       `}</style>
 
       <TestnetBanner />
       <nav className="nav" aria-label={t("nav.mainNavAria")}>
         <div className="nav-inner">
-          {/* Brand + optional admin role badge (#109) */}
-          <Link href="/" className="nav-brand">
-            <div className="nav-logo">S</div>
+          <Link href="/" className="nav-brand" aria-label="StellarEduPay home">
+            <div className="nav-logo" aria-hidden="true">S</div>
             <span className="nav-name">StellarEduPay</span>
           </Link>
-          {isAdmin && (
-            <span
-              className="nav-role-badge"
-              aria-label={t("nav.adminRoleBadgeAria")}
-              title={t("nav.adminRoleBadgeAria")}
-            >
-              {t("nav.adminSection")}
-            </span>
-          )}
 
-          {/* Desktop nav links — role-aware (#109) */}
-          <nav
-            className="nav-links"
-            aria-label={isAdmin ? t("nav.mainNavAria") : undefined}
-          >
-            {/* Public links */}
-            {publicLinks.map(({ href, i18nKey }) => (
+          {/* Desktop links */}
+          <div className="nav-links" role="list">
+            {links.map(({ href, i18nKey }) => (
               <Link
                 key={href}
                 href={href}
+                role="listitem"
                 className={`nav-link${pathname === href ? " active" : ""}`}
                 aria-current={pathname === href ? "page" : undefined}
               >
                 {t(i18nKey)}
               </Link>
             ))}
-
-            {/* Section divider + admin links — only rendered for admins (#109) */}
-            {adminLinks.length > 0 && (
-              <>
-                <div
-                  className="nav-section-divider"
-                  role="separator"
-                  aria-label={t("nav.adminSection")}
-                />
-                {adminLinks.map(({ href, i18nKey }) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={`nav-link nav-link-admin${pathname === href ? " active" : ""}`}
-                    aria-current={pathname === href ? "page" : undefined}
-                    aria-description={t("nav.adminOnlyLinkAria")}
-                  >
-                    {t(i18nKey)}
-                  </Link>
-                ))}
-              </>
-            )}
-          </nav>
+          </div>
 
           <div className="nav-right">
             <select
@@ -359,15 +464,17 @@ export default function Navbar() {
             >
               {dark ? <SunIcon /> : <MoonIcon />}
             </button>
+            {isAdmin && <NotificationCenter />}
             {isAdmin
               ? <button className="nav-pill" onClick={logout}>{t("actions.signOut")}</button>
               : <Link href="/login" className="nav-pill nav-pill-accent">{t("nav.adminLogin")}</Link>
             }
             <button
+              ref={hamburgerRef}
               className="nav-hamburger"
               onClick={() => setOpen(o => !o)}
               aria-expanded={open}
-              aria-controls="nav-mobile-menu"
+              aria-controls="nav-mobile-drawer"
               aria-label={open ? t("nav.closeMenu") : t("nav.openMenu")}
             >
               {open ? "✕" : "☰"}
@@ -376,51 +483,117 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* Mobile menu — role-aware (#109) */}
+      {/* Backdrop — closes menu when clicked */}
       <div
-        id="nav-mobile-menu"
+        className={`nav-mobile-backdrop${open ? " open" : ""}`}
+        onClick={closeMenu}
+        aria-hidden="true"
+      />
+
+      {/* Mobile slide-in drawer */}
+      <div
+        id="nav-mobile-drawer"
+        ref={mobileMenuRef}
         className={`nav-mobile${open ? " open" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("nav.mobileMenuAria", "Navigation menu")}
         aria-hidden={!open}
-        aria-label={t("nav.mainNavAria")}
+        tabIndex={-1}
       >
-        {/* Public links in mobile */}
-        {publicLinks.map(({ href, i18nKey }) => (
-          <Link
-            key={href}
-            href={href}
-            className={`nav-link${pathname === href ? " active" : ""}`}
-            onClick={() => setOpen(false)}
-          >
-            {t(i18nKey)}
+        {/* Drawer header */}
+        <div className="nav-mobile-header">
+          <Link href="/" className="nav-brand" onClick={closeMenu} aria-label="StellarEduPay home">
+            <div className="nav-logo" aria-hidden="true">S</div>
+            <span className="nav-name" style={{ color: "#f1f5f9" }}>StellarEduPay</span>
           </Link>
-        ))}
+          <button
+            className="nav-mobile-close"
+            onClick={closeMenu}
+            aria-label={t("nav.closeMenu")}
+          >
+            ✕
+          </button>
+        </div>
 
-        {/* Admin-only section in mobile — only rendered for admins (#109) */}
-        {adminLinks.length > 0 && (
-          <>
-            <div className="nav-mobile-divider" />
-            <span className="nav-mobile-section-label" aria-hidden="true">
-              {t("nav.adminSection")}
-            </span>
-            {adminLinks.map(({ href, i18nKey }) => (
-              <Link
-                key={href}
-                href={href}
-                className={`nav-link nav-link-admin${pathname === href ? " active" : ""}`}
-                onClick={() => setOpen(false)}
-                aria-description={t("nav.adminOnlyLinkAria")}
+        {/* Nav links */}
+        <div className="nav-mobile-body" role="list">
+          <div className="nav-mobile-section">{t("nav.section", "Main")}</div>
+          {PUBLIC_LINKS.map(({ href, i18nKey }) => (
+            <Link
+              key={href}
+              href={href}
+              role="listitem"
+              className={`nav-mobile-link${pathname === href ? " active" : ""}`}
+              aria-current={pathname === href ? "page" : undefined}
+              onClick={closeMenu}
+            >
+              {t(i18nKey)}
+            </Link>
+          ))}
+
+          {isAdmin && (
+            <>
+              <div className="nav-mobile-divider" />
+              <div className="nav-mobile-section">{t("nav.adminSection", "Admin")}</div>
+              {ADMIN_LINKS.map(({ href, i18nKey }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  role="listitem"
+                  className={`nav-mobile-link${pathname === href ? " active" : ""}`}
+                  aria-current={pathname === href ? "page" : undefined}
+                  onClick={closeMenu}
+                >
+                  {t(i18nKey)}
+                </Link>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* Footer: language, theme, auth */}
+        <div className="nav-mobile-footer">
+          <div className="nav-mobile-footer-row">
+            <select
+              className="nav-mobile-lang"
+              value={i18n.resolvedLanguage || "en"}
+              onChange={(e) => i18n.changeLanguage(e.target.value)}
+              aria-label={t("nav.language")}
+            >
+              {SUPPORTED_LOCALES.map((lng) => (
+                <option key={lng} value={lng}>{LOCALE_NAMES[lng]}</option>
+              ))}
+            </select>
+            <button
+              className="nav-theme-btn"
+              onClick={toggle}
+              aria-label={dark ? t("nav.switchToLight") : t("nav.switchToDark")}
+            >
+              {dark ? <SunIcon /> : <MoonIcon />}
+            </button>
+          </div>
+          {isAdmin
+            ? (
+              <button
+                className="nav-pill"
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={() => { logout(); closeMenu(); }}
               >
-                {t(i18nKey)}
+                {t("actions.signOut")}
+              </button>
+            ) : (
+              <Link
+                href="/login"
+                className="nav-pill nav-pill-accent"
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={closeMenu}
+              >
+                {t("nav.adminLogin")}
               </Link>
-            ))}
-          </>
-        )}
-
-        <div className="nav-mobile-divider" />
-        {isAdmin
-          ? <button className="nav-pill" onClick={() => { logout(); setOpen(false); }} style={{ marginTop: "0.25rem", width: "fit-content" }}>{t("actions.signOut")}</button>
-          : <Link href="/login" className="nav-pill nav-pill-accent" style={{ marginTop: "0.25rem", width: "fit-content" }} onClick={() => setOpen(false)}>{t("nav.adminLogin")}</Link>
-        }
+            )
+          }
+        </div>
       </div>
     </>
   );
