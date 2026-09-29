@@ -6,8 +6,10 @@ import { encodeMemo } from "../utils/stellarMemo";
 import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance, getPaymentRefunds, getPaymentPlan } from "../services/api";
 import DisputeForm from "./DisputeForm";
 import { useSessionGuard } from "../hooks/useSessionGuard";
+import PaymentConfirmationStep from "./PaymentConfirmationStep";
 import { getErrorMessage } from "../utils/errorMessages";
 import { IconCopy, IconCheck, IconAlertTriangle, IconSearch, IconDownload } from "./Icons";
+import TimestampDisplay, { DISPLAY_MODE } from "./TimestampDisplay";
 
 const STATUS_BADGE = {
   valid:     { cls: "badge badge-success", key: "status.validation.valid" },
@@ -49,7 +51,15 @@ function InfoRow({ label, children }) {
   );
 }
 
-export default function PaymentForm({ initialStudentId = "" }) {
+/**
+ * @param {{ initialStudentId?: string, isOnline?: boolean, wasOffline?: boolean }} props
+ *   isOnline  — when false, disables the student lookup / payment submit button
+ *               to prevent duplicate submissions while the device is offline.
+ *   wasOffline — when true (linger window after reconnect), shows a stale-state
+ *               warning so the parent can offer a refresh before re-submitting.
+ */
+export default function PaymentForm({ initialStudentId = "", isOnline = true, wasOffline = false }) {
+  const { t } = useTranslation();
   const [studentId, setStudentId]             = useState(initialStudentId);
   const [shareCopied, setShareCopied]         = useState(false);
   const [student, setStudent]                 = useState(null);
@@ -65,6 +75,9 @@ export default function PaymentForm({ initialStudentId = "" }) {
   const [disputingTx, setDisputingTx]           = useState(null);
   const [disputedTxs, setDisputedTxs]         = useState(new Set());
   const [refunds, setRefunds]                 = useState({}); // txHash -> refund
+  // #101 — confirmation step: after lookup, the user must review and confirm
+  // the payment details before the QR code and wallet address are revealed.
+  const [confirmed, setConfirmed]             = useState(false);
   // #1118 — wallets that cannot send free-text memos can switch the QR code to
   // MEMO_ID or MEMO_HASH; all three decode back to the same payment reference.
   const [memoType, setMemoType]               = useState("MEMO_TEXT");
@@ -120,6 +133,7 @@ export default function PaymentForm({ initialStudentId = "" }) {
     setPaymentPlan(null);
     setHasDeletedPayments(false);
     setBalanceError(false);
+    setConfirmed(false); // #101 — reset confirmation when looking up a new student
     setLoading(true);
     setPaymentsLoading(true);
     try {
@@ -136,11 +150,16 @@ export default function PaymentForm({ initialStudentId = "" }) {
         }),
         getPaymentPlan(id, { signal }).catch(() => null),
       ]);
-      setStudent(stuRes.data);
-      setInstructions(instrRes.data);
-      const paymentsList = payRes.data?.payments ?? payRes.data ?? [];
+      if (stuRes.status === "rejected") throw stuRes.reason;
+
+      setStudent(stuRes.value?.data ?? null);
+      setInstructions(instrRes.status === "fulfilled" ? instrRes.value?.data ?? null : null);
+      setPaymentPlan(planRes.status === "fulfilled" ? planRes.value?.data ?? null : null);
+      const paymentsData = payRes.status === "fulfilled" ? payRes.value?.data : [];
+      const paymentsList = paymentsData?.payments ?? paymentsData ?? [];
       setPayments(paymentsList);
-      setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
+      const balanceData = balRes.status === "fulfilled" ? balRes.value?.data : null;
+      setHasDeletedPayments(balanceData?.hasDeletedPayments === true);
       // Fetch refunds for each payment
       const newRefunds = {};
       for (const p of paymentsList) {
@@ -245,7 +264,6 @@ export default function PaymentForm({ initialStudentId = "" }) {
   }
 
   const isTestnet = process.env.NEXT_PUBLIC_STELLAR_NETWORK === "testnet";
-  const { t } = useTranslation();
 
   return (
     <>
@@ -291,10 +309,35 @@ export default function PaymentForm({ initialStudentId = "" }) {
                 className="form-input"
               />
             </div>
-            <button type="submit" disabled={loading} className="btn btn-dark" style={{ width: "100%" }}>
-              {loading ? t("paymentForm.lookingUp") : t("paymentForm.submit")}
+            <button type="submit" disabled={loading || !isOnline} className="btn btn-dark" style={{ width: "100%" }}>
+              {loading ? t("paymentForm.lookingUp") : !isOnline ? t("networkStatus.offlineSubmitLabel", "Offline — submission disabled") : t("paymentForm.submit")}
             </button>
           </form>
+
+          {/* Offline guard — never allow re-submit without explicit user action */}
+          {!isOnline && (
+            <div role="alert" className="alert alert-warning" style={{ marginTop: "0.75rem", fontSize: "0.8125rem" }}>
+              <IconAlertTriangle size={14} />
+              <span>{t("networkStatus.offline", "You are offline. Payment submission is disabled.")}</span>
+            </div>
+          )}
+
+          {/* Stale-state warning shown during the back-online linger window */}
+          {isOnline && wasOffline && (
+            <div role="status" className="alert alert-warning" style={{ marginTop: "0.75rem", fontSize: "0.8125rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+              <span>{t("networkStatus.staleWarning", "Your connection was interrupted. Data may be stale.")}</span>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                style={{ color: "inherit", borderColor: "currentColor", opacity: 0.85, flexShrink: 0 }}
+                onClick={() => {
+                  if (studentId.trim()) lookupStudent(studentId.trim());
+                }}
+              >
+                {t("actions.retry")}
+              </button>
+            </div>
+          )}
 
           {error && (
             <div ref={errorRef} role="alert" tabIndex="-1" className="alert alert-danger" style={{ marginTop: "1rem" }}>
@@ -305,6 +348,26 @@ export default function PaymentForm({ initialStudentId = "" }) {
 
           {student && instructions && (
             <div style={{ marginTop: "1.25rem" }}>
+              {/* #101 — confirmation step: user must review & confirm before
+                  payment details (QR code, wallet address) are revealed.
+                  Once confirmed, this block renders the full payment UI. */}
+              {!confirmed && (
+                <PaymentConfirmationStep
+                  student={student}
+                  instructions={instructions}
+                  onConfirm={() => setConfirmed(true)}
+                  onEdit={() => {
+                    setStudent(null);
+                    setInstructions(null);
+                    setPayments(null);
+                    setConfirmed(false);
+                    setStudentId("");
+                  }}
+                />
+              )}
+
+              {confirmed && (
+              <>
               {isTestnet && (
                 <div className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
                   <IconAlertTriangle size={14} />
@@ -503,6 +566,8 @@ export default function PaymentForm({ initialStudentId = "" }) {
                   {t("paymentForm.acceptedAssets")} {instructions.acceptedAssets.map(a => a.displayName).join(", ")}
                 </p>
               )}
+              </>
+              )} {/* end confirmed */}
             </div>
           )}
 
@@ -562,7 +627,7 @@ export default function PaymentForm({ initialStudentId = "" }) {
                     </div>
                     {p.confirmedAt && (
                       <div style={{ fontSize: "0.75rem", color: "var(--text-subtle)" }}>
-                        {new Date(p.confirmedAt).toLocaleString()}
+                        <TimestampDisplay iso={p.confirmedAt} mode={DISPLAY_MODE.UTC} />
                       </div>
                     )}
 
