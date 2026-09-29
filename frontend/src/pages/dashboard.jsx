@@ -9,6 +9,7 @@ import RequireAdmin from "../components/RequireAdmin";
 import EmptyState, { StandaloneEmptyState } from "../components/EmptyState";
 import BlockchainStatusBadge from "../components/BlockchainStatusBadge";
 import { TableDensityControl, useTableDensity } from "../components/TableDensityControl";
+import FilterChips from "../components/FilterChips"; // Issue #107
 import Pagination from "../components/Pagination";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
@@ -495,6 +496,38 @@ function Dashboard() {
               <TableDensityControl density={density} setDensity={setDensity} />
             </div>
           </div>
+
+          {/* Filter chips — Issue #107 */}
+          {(() => {
+            const activeFilters = [
+              statusFilter && statusFilter !== "all"
+                ? { key: "status", label: t("dashboard.colStatus"), value: t(`status.student.${statusFilter}`) }
+                : null,
+              classFilter
+                ? { key: "className", label: t("dashboard.colClass"), value: classFilter }
+                : null,
+              debouncedSearch
+                ? { key: "search", label: t("dashboard.searchAria"), value: debouncedSearch }
+                : null,
+            ].filter(Boolean);
+            return activeFilters.length > 0 ? (
+              <div style={{ padding: "0 1.25rem" }}>
+                <FilterChips
+                  filters={activeFilters}
+                  onRemove={key => {
+                    if (key === "status")    setStatusFilter("all");
+                    if (key === "className") setClassFilter("");
+                    if (key === "search")    setSearch("");
+                  }}
+                  onClearAll={() => {
+                    setStatusFilter("all");
+                    setClassFilter("");
+                    setSearch("");
+                  }}
+                />
+              </div>
+            ) : null;
+          })()}
 
           {/* Table */}
           <ErrorBoundary>

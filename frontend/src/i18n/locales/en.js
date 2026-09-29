@@ -858,6 +858,7 @@ const en = {
     notes: "Notes",
   },
 
+
   // ── Issue #107: Filter Chips ─────────────────────────────────────────────────
   filterChips: {
     activeLabel: "Filters",
@@ -880,6 +881,7 @@ const en = {
   // ── Issue #109: Role-aware nav ───────────────────────────────────────────────
   // (keys added to the existing nav section; listed here for clarity)
   // nav.adminRoleBadgeAria and nav.adminOnlyLinkAria are added inline below.
+
 
   exportJob: {
     queued: "Export queued — preparing your report…",
