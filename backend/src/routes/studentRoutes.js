@@ -21,6 +21,7 @@ const {
   adjustStudentCredit,
 } = require('../controllers/studentController');
 const { resubscribeReminders } = require('../controllers/reminderController');
+const { getImportJobStatus } = require('../controllers/importJobController');
 const { validateRegisterStudent, validateStudentIdParam, validatePagination, validateUpdateStudent } = require('../middleware/validate');
 const { resolveSchool } = require('../middleware/schoolContext');
 const { requireAdminAuth, requireSchoolAuth } = require('../middleware/auth');
@@ -32,9 +33,13 @@ router.use(resolveSchool);
 
 // Admin-only routes
 router.post('/', requireAdminAuth, validateRegisterStudent, registerStudent);
-router.post('/bulk', requireAdminAuth, bulkImportLimiter, express.json({ limit: '1mb' }), streamingCsvUpload(), bulkImportStudents);
+router.post('/bulk', requireAdminAuth, bulkImportLimiter, express.json({ limit: '1mb' }), streamingCsvUpload({ requiredHeaders: ['studentId', 'name', 'class'] }), bulkImportStudents);
 router.get('/', requireAdminAuth, validatePagination, getAllStudents);
 router.get('/export', requireAdminAuth, exportStudents);
+
+// Import job status — registered BEFORE /:studentId so Express does not
+// capture the literal segment 'import' as a studentId parameter.
+router.get('/import/:jobId', requireAdminAuth, getImportJobStatus);
 
 // Authentication-required routes (Issue #1040: all student financial data requires auth)
 router.get('/summary', requireSchoolAuth(), getPaymentSummary);

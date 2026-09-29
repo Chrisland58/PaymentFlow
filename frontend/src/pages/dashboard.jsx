@@ -6,8 +6,11 @@ import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
 import SseDegradedBanner from "../components/SseDegradedBanner";
 import RequireAdmin from "../components/RequireAdmin";
+import EmptyState, { StandaloneEmptyState } from "../components/EmptyState";
 import BlockchainStatusBadge from "../components/BlockchainStatusBadge";
 import { TableDensityControl, useTableDensity } from "../components/TableDensityControl";
+import FilterChips from "../components/FilterChips"; // Issue #107
+import Pagination from "../components/Pagination";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent, getSchool } from "../services/api";
 import {
@@ -15,20 +18,13 @@ import {
   IconSearch, IconChevronLeft, IconChevronRight,
 } from "../components/Icons";
 import { DEFAULT_CLASS_OPTIONS, loadSchoolClassOptions } from "../utils/classOptions";
+import { formatRelative } from "../utils/dateTime";
 
-const PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 20;
 
 function Dashboard() {
   const { t } = useTranslation();
-  const timeAgo = (iso) => {
-    if (!iso) return t("time.never");
-    const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
-    if (mins < 1) return t("time.justNow");
-    if (mins < 60) return t("time.minutesAgo", { mins });
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return t("time.hoursAgo", { hrs });
-    return new Date(iso).toLocaleDateString();
-  };
+  const timeAgo = (iso) => formatRelative(iso, t);
 
   const STATUS_BADGE = {
     paid:    { cls: "badge badge-success", label: t("status.student.paid") },
@@ -47,6 +43,7 @@ function Dashboard() {
   const [page, setPage]                       = useState(1);
   const [pages, setPages]                     = useState(1);
   const [total, setTotal]                     = useState(0);
+  const [pageSize, setPageSize]               = useState(DEFAULT_PAGE_SIZE);
   const [search, setSearch]                   = useState("");
   const [statusFilter, setStatusFilter]       = useState("all");
   const [classFilter, setClassFilter]         = useState("");
@@ -100,7 +97,7 @@ function Dashboard() {
 
     setStudentsLoading(true);
     setStudentsError(null);
-    getStudents(p, PAGE_SIZE, { search: srch, status: st, className: cls }, { signal: controller.signal })
+    getStudents(p, pageSize, { search: srch, status: st, className: cls }, { signal: controller.signal })
       .then(({ data }) => {
         setStudents(data.students);
         setPages(data.pages || 1);
@@ -117,7 +114,7 @@ function Dashboard() {
           setStudentsLoading(false);
         }
       });
-  }, [t]);
+  }, [t, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tracks whether the page effect is running for the very first time.
   // On mount the filter effect already calls fetchStudents(1, …), so the page
@@ -137,6 +134,12 @@ function Dashboard() {
     setPage(1);
     fetchStudents(1, debouncedSearch, statusFilter, classFilter);
   }, [debouncedSearch, statusFilter, classFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When page size changes, reset to page 1 and refetch.
+  useEffect(() => {
+    setPage(1);
+    fetchStudents(1, debouncedSearch, statusFilter, classFilter);
+  }, [pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Skip the initial render — the filter effect above already fetched page 1.
@@ -487,20 +490,48 @@ function Dashboard() {
             </div>
           </div>
 
+          {/* Filter chips — Issue #107 */}
+          {(() => {
+            const activeFilters = [
+              statusFilter && statusFilter !== "all"
+                ? { key: "status", label: t("dashboard.colStatus"), value: t(`status.student.${statusFilter}`) }
+                : null,
+              classFilter
+                ? { key: "className", label: t("dashboard.colClass"), value: classFilter }
+                : null,
+              debouncedSearch
+                ? { key: "search", label: t("dashboard.searchAria"), value: debouncedSearch }
+                : null,
+            ].filter(Boolean);
+            return activeFilters.length > 0 ? (
+              <div style={{ padding: "0 1.25rem" }}>
+                <FilterChips
+                  filters={activeFilters}
+                  onRemove={key => {
+                    if (key === "status")    setStatusFilter("all");
+                    if (key === "className") setClassFilter("");
+                    if (key === "search")    setSearch("");
+                  }}
+                  onClearAll={() => {
+                    setStatusFilter("all");
+                    setClassFilter("");
+                    setSearch("");
+                  }}
+                />
+              </div>
+            ) : null;
+          })()}
+
           {/* Table */}
           <ErrorBoundary>
             {studentsError ? (
               <div className="card-body">
-                <div role="alert" className="alert alert-danger">
-                  <span style={{ flex: 1 }}>{studentsError}</span>
-                  <button
-                    onClick={() => fetchStudents(page, debouncedSearch, statusFilter, classFilter)}
-                    className="btn btn-sm btn-ghost"
-                    style={{ color: "inherit", borderColor: "currentColor", opacity: 0.8 }}
-                  >
-                    {t("actions.retry")}
-                  </button>
-                </div>
+                <StandaloneEmptyState
+                    variant="error"
+                  title={t("dashboard.failedToLoadStudents")}
+                  description="Check your connection and try again."
+                  action={{ label: t("actions.retry"), onClick: () => fetchStudents(page, debouncedSearch, statusFilter, classFilter) }}
+                />
               </div>
             ) : (
               <div style={{ overflowX: "auto" }} aria-busy={studentsLoading} aria-label={t("dashboard.studentTableAria")}>
@@ -532,17 +563,16 @@ function Dashboard() {
                         </tr>
                       ))
                     ) : students.length === 0 ? (
-                      <tr>
-                        <td colSpan="6">
-                          <div className="empty-state">
-                            <div className="empty-state-icon"><IconSearch size={26} /></div>
-                            <div className="empty-state-title">{t("dashboard.emptyTitle")}</div>
-                            <div className="empty-state-desc">
-                              {search || statusFilter !== "all" || classFilter ? t("dashboard.emptyFilters") : t("dashboard.emptyNone")}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
+                      <EmptyState
+                        variant={search || statusFilter !== "all" || classFilter ? "filtered" : "empty"}
+                        colSpan={6}
+                        title={search || statusFilter !== "all" || classFilter ? t("dashboard.emptyTitle") : "No students yet"}
+                        description={search || statusFilter !== "all" || classFilter ? t("dashboard.emptyFilters") : t("dashboard.emptyNone")}
+                        action={search || statusFilter !== "all" || classFilter ? {
+                          label: "Clear filters",
+                          onClick: () => { setSearch(""); setStatusFilter("all"); setClassFilter(""); }
+                        } : undefined}
+                      />
                     ) : students.map(s => {
                       const st = (s.status || "unpaid").toLowerCase();
                       const badge = STATUS_BADGE[st] || STATUS_BADGE.unpaid;
@@ -630,34 +660,16 @@ function Dashboard() {
 
           {/* Pagination */}
           {total > 0 && (
-            <div style={{ padding: "0.875rem 1.25rem", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
-              <span className="pagination-info" aria-live="polite" aria-atomic="true">
-                {studentsLoading ? t("actions.loading") : t("dashboard.rangeOf", { start: rangeStart, end: rangeEnd, total: total.toLocaleString() })}
-              </span>
-              <nav className="pagination-controls" aria-label={t("dashboard.paginationAria")}>
-                <button
-                  className="page-btn"
-                  disabled={page === 1 || studentsLoading}
-                  onClick={() => setPage(p => p - 1)}
-                  aria-label={t("actions.previousPage")}
-                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
-                >
-                  <IconChevronLeft size={15} /> {t("actions.prev")}
-                </button>
-                <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)", padding: "0 0.25rem" }} aria-current="page">
-                  {page} / {pages}
-                </span>
-                <button
-                  className="page-btn"
-                  disabled={page === pages || studentsLoading}
-                  onClick={() => setPage(p => p + 1)}
-                  aria-label={t("actions.nextPage")}
-                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
-                >
-                  {t("actions.next")} <IconChevronRight size={15} />
-                </button>
-              </nav>
-            </div>
+            <Pagination
+              page={page}
+              pages={pages}
+              total={total}
+              pageSize={pageSize}
+              pageSizeOptions={[10, 20, 50]}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => setPageSize(size)}
+              loading={studentsLoading}
+            />
           )}
         </div>
       </div>
