@@ -1,0 +1,265 @@
+name: Load Simulation Tests
+
+# Ramp and spike tests run on PRs that touch payment/service code.
+# The 2-hour soak test is scheduled nightly and can also be triggered manually.
+#
+# k6 load scripts live in tests/loadsim/. They target a running backend
+# instance; in CI that instance is started via Docker Compose.
+#
+# Reports are uploaded as CI artefacts (JSON summaries + k6 HTML reports).
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Which test to run'
+        required: true
+        default: 'ramp'
+        type: choice
+        options: [ramp, spike, soak, all]
+  schedule:
+    # Soak test runs every night at 02:00 UTC.
+    - cron: '0 2 * * *'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/src/services/**'
+      - 'backend/src/controllers/paymentController.js'
+      - 'backend/src/models/**'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ── Ramp + spike tests (run on PRs and manual dispatch) ──────────────────
+  ramp-spike:
+    name: Ramp & spike load tests
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (inputs.test_type == 'ramp' || inputs.test_type == 'spike' || inputs.test_type == 'all'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --replSet rs0
+          --health-cmd "mongosh --quiet --eval 'try { if (rs.status().ok !== 1) { throw new Error(\"rs not initiated\"); } } catch (e) { try { rs.initiate({ _id: \"rs0\", members: [{ _id: 0, host: \"localhost:27017\" }] }); } catch (e2) {} process.exit(1); } if (!db.hello().isWritablePrimary) { process.exit(1); }'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 20s
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      MONGO_URI: mongodb://localhost:27017/stellaredupay_loadsim?replicaSet=rs0
+      JWT_SECRET: ci-loadsim-jwt-secret
+      SCHOOL_WALLET_ADDRESS: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      STELLAR_NETWORK: testnet
+      REDIS_URL: redis://localhost:6379
+      BASE_URL: http://localhost:5000
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            backend/node_modules
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm ci && cd backend && npm ci
+
+      - name: Run migrations
+        working-directory: backend
+        run: npm run migrate
+
+      - name: Seed load test data (schools + students)
+        run: node scripts/seed-loadsim-data.js
+        env:
+          MONGO_URI: mongodb://localhost:27017/stellaredupay_loadsim?replicaSet=rs0
+
+      - name: Start backend in background
+        run: |
+          cd backend
+          node src/app.js &
+          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+          # Wait up to 30 s for the backend to become healthy.
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:5000/health/live; then echo ""; break; fi
+            echo "Waiting for backend... ($i/15)"
+            sleep 2
+          done
+
+      - name: Install k6
+        run: |
+          curl -sSL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
+            | tar xz --strip-components=1 -C /usr/local/bin k6-v0.54.0-linux-amd64/k6
+          k6 version
+
+      - name: Create report directory
+        run: mkdir -p reports/loadsim
+
+      - name: Run ramp test
+        if: >
+          github.event_name == 'pull_request' ||
+          inputs.test_type == 'ramp' || inputs.test_type == 'all'
+        run: |
+          k6 run tests/loadsim/k6-ramp-test.js \
+            --env BASE_URL=$BASE_URL \
+            --out json=reports/loadsim/ramp-k6-output.json \
+            --summary-export reports/loadsim/ramp-summary.json || true
+
+      - name: Run spike test
+        if: >
+          github.event_name == 'pull_request' ||
+          inputs.test_type == 'spike' || inputs.test_type == 'all'
+        run: |
+          k6 run tests/loadsim/k6-spike-test.js \
+            --env BASE_URL=$BASE_URL \
+            --out json=reports/loadsim/spike-k6-output.json \
+            --summary-export reports/loadsim/spike-summary.json || true
+
+      - name: Stop backend
+        if: always()
+        run: kill "$BACKEND_PID" 2>/dev/null || true
+
+      - name: Upload load test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-reports-ramp-spike
+          path: reports/loadsim/
+          retention-days: 14
+
+  # ── Soak test (nightly only) ─────────────────────────────────────────────
+  soak:
+    name: Soak test (2h, nightly)
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (inputs.test_type == 'soak' || inputs.test_type == 'all'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 150   # 2h soak + setup buffer
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --replSet rs0
+          --health-cmd "mongosh --quiet --eval 'try { if (rs.status().ok !== 1) { throw new Error(\"rs not initiated\"); } } catch (e) { try { rs.initiate({ _id: \"rs0\", members: [{ _id: 0, host: \"localhost:27017\" }] }); } catch (e2) {} process.exit(1); } if (!db.hello().isWritablePrimary) { process.exit(1); }'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 20s
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      MONGO_URI: mongodb://localhost:27017/stellaredupay_soak?replicaSet=rs0
+      JWT_SECRET: ci-soak-jwt-secret
+      SCHOOL_WALLET_ADDRESS: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      STELLAR_NETWORK: testnet
+      REDIS_URL: redis://localhost:6379
+      BASE_URL: http://localhost:5000
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            backend/node_modules
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      - run: npm ci && cd backend && npm ci
+      - name: Run migrations
+        working-directory: backend
+        run: npm run migrate
+
+      - name: Seed load test data
+        run: node scripts/seed-loadsim-data.js
+        env:
+          MONGO_URI: mongodb://localhost:27017/stellaredupay_soak?replicaSet=rs0
+
+      - name: Start backend
+        run: |
+          cd backend && node src/app.js &
+          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:5000/health/live; then echo ""; break; fi
+            sleep 2
+          done
+
+      - name: Install k6
+        run: |
+          curl -sSL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
+            | tar xz --strip-components=1 -C /usr/local/bin k6-v0.54.0-linux-amd64/k6
+
+      - name: Create report directory
+        run: mkdir -p reports/loadsim
+
+      - name: Run soak test
+        run: |
+          k6 run tests/loadsim/k6-soak-test.js \
+            --env BASE_URL=$BASE_URL \
+            --out json=reports/loadsim/soak-k6-output.json \
+            --summary-export reports/loadsim/soak-summary.json || true
+
+      - name: Stop backend
+        if: always()
+        run: kill "$BACKEND_PID" 2>/dev/null || true
+
+      - name: Upload soak test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-report-soak
+          path: reports/loadsim/
+          retention-days: 30
+
+  # ── Index coverage check (runs with the normal test suite) ───────────────
+  index-coverage:
+    name: Payment query index coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      - run: npm ci
+
+      - name: Run payment query index tests
+        run: npx jest tests/issue-39-payment-query-indexes.test.js --forceExit

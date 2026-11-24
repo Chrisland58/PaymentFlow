@@ -1,54 +1,70 @@
-# Load Simulation
+# Load Simulation Tests
 
-`tests/loadsim/horizonPollLoadModel.js` is a discrete-event model of Horizon
-polling under rate-limit pressure. It exists because the claim behind the
-coordinated polling budget (#1124) is a claim about behaviour at a school count
-we cannot provision in CI, against a rate limit we do not control.
+PaymentFlow uses [k6](https://k6.io/) for load simulation. The scripts live in
+`tests/loadsim/` and are run via `.github/workflows/load-testing.yml`.
 
-## What runs it
+## Scripts
 
-`tests/loadsim/horizonPollLoadModel.test.js` drives the model and asserts the
-mechanisms it depends on. Run it with:
+| Script | Purpose | Trigger |
+|--------|---------|---------|
+| `k6-ramp-test.js` | 0 → 1000 VUs over 5 min, sustained 10 min | PRs touching payment code, manual |
+| `k6-spike-test.js` | Instant 2000-VU spike for 30 s, then recovery | PRs touching payment code, manual |
+| `k6-soak-test.js` | 500 VUs for 2 hours | Nightly at 02:00 UTC |
+| `horizonPollLoadModel.js` | Discrete-event model for Horizon polling (#1124) | `npm run test:loadsim` |
+
+## Performance targets (#654)
+
+| Metric | Target |
+|--------|--------|
+| P95 latency (payment intent creation) | < 500 ms |
+| 5xx error rate at 1000 concurrent users | 0 |
+| Throughput | ≥ 100 payments/second |
+| Spike recovery time (after 2000-VU burst) | < 30 s |
+
+## Running locally
+
+Install k6 (macOS: `brew install k6`; Linux: see [k6 docs](https://k6.io/docs/get-started/installation/)).
 
 ```bash
-npm run test:loadsim
+# Start the backend first
+cd backend && npm run dev
+
+# Ramp test (1000 VUs)
+k6 run tests/loadsim/k6-ramp-test.js \
+  --env BASE_URL=http://localhost:5000 \
+  --env AUTH_TOKEN=<your-jwt>
+
+# Spike test
+k6 run tests/loadsim/k6-spike-test.js \
+  --env BASE_URL=http://localhost:5000
+
+# Soak test (2 h — run overnight)
+k6 run tests/loadsim/k6-soak-test.js \
+  --env BASE_URL=http://localhost:5000
 ```
 
-The suite is excluded from the default `npm test` run via the
-`tests/loadsim/` entry in `testPathIgnorePatterns`, so it does not add its
-simulation cost to every CI run.
+Reports are written to `reports/loadsim/` as JSON summaries.
 
-## When to run it
+## Pre-seeding test data
 
-Run `npm run test:loadsim` when you change any of:
+The load scripts draw from a pool of 500 pre-seeded students under school
+`SCH-LOAD-001`. Before running locally, seed that data:
 
-- `backend/src/services/horizonPollBudget.js` (budget sizing, priority
-  ordering, deferral accounting)
-- `backend/src/services/transactionPollingService.js`, specifically the
-  `consecutiveErrors` / `POLL_MAX_BACKOFF_MS` cycle-level backoff
-- the model itself
+```bash
+node scripts/seed-loadsim-data.js
+```
 
-Outside those cases the default suite is enough.
+In CI this is done automatically by the workflow before k6 starts.
 
-## What the assertions cover
+## Index coverage
 
-The tests assert properties, not tuned percentile numbers, so they fail when
-the budget service stops behaving the way the model assumes rather than when a
-delay figure drifts:
+`tests/issue-39-payment-query-indexes.test.js` verifies that the MongoDB
+indexes required for high-volume query patterns are defined in the Mongoose
+schemas. Run it with:
 
-- the model is deterministic for a fixed seed, so any failure reproduces
-- every simulated payment ends up counted as resolved or unresolved
-- the scenario is genuinely oversubscribed, so uncoordinated polling does hit
-  the allowance and waste requests
-- coordinated polling never overshoots the allowance and never trips the
-  cycle-level backoff
-- coordinated polling has lower p95, p99 and maximum sync delay
-- a roomy allowance rate-limits neither strategy, which guards against a model
-  that manufactures rate limiting regardless of capacity
+```bash
+npx jest tests/issue-39-payment-query-indexes.test.js --forceExit
+```
 
-## Interpreting a failure
-
-A failure here is not necessarily a regression in production behaviour: it can
-equally mean the model has drifted from the implementation. Check which of the
-two moved before changing either. If the budget service intentionally changed
-shape, update the model in the same commit so the two stay in step.
+This test is included in the normal `npm test` run and in the CI
+`index-coverage` job.
