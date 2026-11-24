@@ -10,6 +10,7 @@ Thank you for your interest in contributing to StellarEduPay! This guide will he
 - [Development Setup](#-development-setup)
 - [Branch Naming Convention](#-branch-naming-convention)
 - [Commit Message Guidelines](#-commit-message-guidelines)
+- [Changelog Process](#-changelog-process)
 - [Coding Standards](#-coding-standards)
 - [Testing Requirements](#-testing-requirements)
 - [Pull Request Process](#-pull-request-process)
@@ -217,6 +218,71 @@ Added examples for bulk payment verification endpoint.
 - Use imperative mood ("move cursor to..." not "moves cursor to...")
 - First line should be 50 characters or less
 - Reference issues and PRs in the footer
+
+---
+
+## 📝 Changelog Process
+
+PaymentFlow maintains a human-readable `CHANGELOG.md` following the
+[Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format and
+[Semantic Versioning](https://semver.org/). The process is automated
+via `.github/workflows/changelog.yml` (#648).
+
+### Your responsibility as a contributor
+
+Every PR that adds, changes, fixes, or removes behaviour **must** include a
+`CHANGELOG.md` entry under `## [Unreleased]`. The PR template includes a
+checkbox to remind you. CI validates the format on every PR — a malformed
+entry will block merge.
+
+Add your entry under the correct subsection:
+
+| Subsection | When to use |
+|------------|-------------|
+| `### Added` | New feature or endpoint |
+| `### Changed` | Changed behaviour, API, or configuration |
+| `### Deprecated` | Feature marked for future removal |
+| `### Removed` | Deleted feature or endpoint |
+| `### Fixed` | Bug fix |
+| `### Security` | Security patch |
+| `### Documentation` | Docs-only changes |
+
+**Example entry:**
+
+```markdown
+## [Unreleased]
+
+### Fixed
+
+- **Payment deduplication (#123)**: Concurrent submissions of the same
+  `txHash` no longer create two payment records. The second call now
+  returns the cached result with `cached: true`.
+```
+
+### Writing a good entry
+
+- One bullet per logical change.
+- Start with **Bold title (#issue)**: then one sentence of plain English.
+- Describe the effect on the user or operator, not the diff.
+- Link the issue number.
+
+### How the automation works
+
+| Event | What happens |
+|-------|-------------|
+| PR opened | CI runs `node scripts/validate-changelog.js` — fails if format is wrong |
+| Merge to `main` | CI regenerates `[Unreleased]` from conventional commit messages since the last tag and commits any new entries |
+| Tag `v*.*.*` pushed | CI promotes `[Unreleased]` → `[x.y.z] - YYYY-MM-DD`, inserts a fresh empty `[Unreleased]`, commits to `main`, and creates a GitHub Release with the section body as release notes |
+
+You still write the human-readable entry — automation handles promotion and
+release note generation so no manual step is required at release time.
+
+### Cutting a release
+
+1. Ensure `CHANGELOG.md` `[Unreleased]` is accurate.
+2. Run `npm version <major|minor|patch>` (or set the version manually).
+3. Push the resulting version tag: `git push origin v1.2.3`.
+4. The `release` job in `changelog.yml` does the rest.
 
 ---
 

@@ -1,0 +1,169 @@
+name: Changelog
+
+# 1. On every PR: validate CHANGELOG.md format (Keep a Changelog).
+# 2. On push to main: auto-update the [Unreleased] section from conventional
+#    commit messages since the last release tag.
+# 3. On version tag push (v*.*.*): promote [Unreleased] to a versioned section
+#    and create a GitHub Release with the generated notes.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ── Validate format on every PR ──────────────────────────────────────────
+  validate:
+    name: Validate CHANGELOG.md format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Validate Keep a Changelog format
+        run: node scripts/validate-changelog.js
+
+  # ── Auto-update [Unreleased] on merge to main ────────────────────────────
+  update-unreleased:
+    name: Update [Unreleased] from conventional commits
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install conventional-changelog-cli
+        run: npm install --no-save conventional-changelog-cli
+
+      - name: Regenerate [Unreleased] section
+        id: regen
+        run: |
+          # Find the latest release tag, if any.
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            echo "No release tags found — generating from full history"
+            FROM_ARG=""
+          else
+            echo "Generating since $LAST_TAG"
+            FROM_ARG="--from=$LAST_TAG"
+          fi
+
+          # Generate a draft of changes in Keep a Changelog format using
+          # conventional commits since the last tag.
+          npx conventional-changelog-cli \
+            --preset conventionalcommits \
+            --release-count 0 \
+            --outfile /tmp/unreleased-draft.md \
+            $FROM_ARG || true
+
+          # Only commit if the draft produced non-empty output.
+          if [ -s /tmp/unreleased-draft.md ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inject [Unreleased] into CHANGELOG.md
+        if: steps.regen.outputs.has_changes == 'true'
+        run: node scripts/inject-unreleased.js /tmp/unreleased-draft.md
+
+      - name: Commit updated CHANGELOG.md
+        if: steps.regen.outputs.has_changes == 'true'
+        run: |
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No CHANGELOG changes to commit"
+          else
+            git commit -m "docs(changelog): update [Unreleased] from conventional commits [skip ci]"
+            git push origin HEAD
+          fi
+
+  # ── Create GitHub Release on version tag ────────────────────────────────
+  release:
+    name: Create GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Promote [Unreleased] to versioned section in CHANGELOG.md
+        run: node scripts/promote-changelog.js "${{ steps.version.outputs.version }}"
+
+      - name: Commit promoted CHANGELOG.md
+        run: |
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No CHANGELOG changes to commit"
+          else
+            git commit -m "docs(changelog): release v${{ steps.version.outputs.version }} [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          # Pull the content of the newly-promoted version section.
+          node scripts/extract-release-notes.js "${{ steps.version.outputs.version }}" > /tmp/release-notes.md
+          echo "notes_file=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const notes = fs.readFileSync('${{ steps.notes.outputs.notes_file }}', 'utf8');
+            const tag   = 'v${{ steps.version.outputs.version }}';
+
+            await github.rest.repos.createRelease({
+              owner:            context.repo.owner,
+              repo:             context.repo.repo,
+              tag_name:         tag,
+              name:             `Release ${tag}`,
+              body:             notes,
+              draft:            false,
+              prerelease:       false,
+              generate_release_notes: false,
+            });
+            console.log(`Created GitHub Release for ${tag}`);

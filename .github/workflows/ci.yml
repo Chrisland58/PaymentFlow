@@ -91,6 +91,17 @@ jobs:
       - uses: actions/checkout@v7
       - run: node scripts/check-error-response-shape.js
 
+  changelog-format:
+    name: Validate CHANGELOG.md format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Validate Keep a Changelog format
+        run: node scripts/validate-changelog.js
+
   k8s-ingress-tls:
     name: Verify Kubernetes ingress has TLS configuration
     runs-on: ubuntu-latest
@@ -429,6 +440,7 @@ jobs:
       - migrations
       - orphan-dirs
       - error-response-shape
+      - changelog-format
       - k8s-ingress-tls
       - lint-backend
       - lint-frontend
