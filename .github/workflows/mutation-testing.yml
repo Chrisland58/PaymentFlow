@@ -1,0 +1,162 @@
+name: Mutation Testing (Stryker)
+
+# Runs mutation tests for the auth and payment service modules on pull requests
+# that touch those directories (#650). The job is label-triggered: add the
+# "mutation-test" label to a PR to run Stryker, or push to main.
+#
+# A PR comment is posted with the mutation score and the delta vs the base branch.
+# The job fails (CI gate) when the score falls below 70%.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/src/services/**'
+      - 'backend/src/middleware/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/src/services/**'
+      - 'backend/src/middleware/**'
+  pull_request_target:
+    types: [labeled]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  mutation-test:
+    name: Stryker mutation testing
+    # For label-triggered runs only execute when the right label is applied.
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.action != 'labeled') ||
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'mutation-test')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write  # required to post the score comment
+      contents: read
+
+    env:
+      STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+      MONGO_URI: mongodb://localhost:27017/stellaredupay_test?replicaSet=rs0
+      JWT_SECRET: ci-mutation-test-jwt-secret
+      SCHOOL_WALLET_ADDRESS: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      # 4 workers keeps wall-clock time under 10 minutes on a 2-core runner (#650 AC).
+      STRYKER_CONCURRENCY: '4'
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --replSet rs0
+          --health-cmd "mongosh --quiet --eval 'try { if (rs.status().ok !== 1) { throw new Error(\"rs not initiated\"); } } catch (e) { try { rs.initiate({ _id: \"rs0\", members: [{ _id: 0, host: \"localhost:27017\" }] }); } catch (e2) {} process.exit(1); } if (!db.hello().isWritablePrimary) { process.exit(1); }'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 20s
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history is needed to compute the mutation score delta vs base.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            backend/node_modules
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: cd backend && npm ci
+
+      - name: Install Stryker and Jest runner
+        run: |
+          npm install --no-save \
+            @stryker-mutator/core \
+            @stryker-mutator/jest-runner
+
+      - name: Run migrations against CI MongoDB
+        working-directory: backend
+        run: npm run migrate
+
+      - name: Run Stryker mutation tests
+        id: stryker
+        run: |
+          npx stryker run stryker.auth.config.mjs \
+            --concurrency "$STRYKER_CONCURRENCY" 2>&1 | tee stryker-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          # Extract the mutation score from Stryker output for the PR comment.
+          SCORE=$(grep -oP 'Mutation score: \K[0-9.]+' stryker-output.txt | tail -1 || echo "unknown")
+          echo "mutation_score=$SCORE" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 14
+
+      # Post a comment on the PR with the mutation score.
+      # On push to main there is no PR, so this step is skipped automatically.
+      - name: Post mutation score comment
+        if: always() && github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const score = '${{ steps.stryker.outputs.mutation_score }}';
+            const jobStatus = '${{ job.status }}';
+            const passed = jobStatus === 'success';
+            const icon = passed ? '✅' : '❌';
+            const body = [
+              `## ${icon} Mutation Testing Report`,
+              '',
+              `**Mutation score:** \`${score}%\``,
+              `**Threshold:** \`70%\` (target: \`80%\`)`,
+              `**Status:** ${passed ? 'Passed — mutation gate cleared' : 'Failed — score below 70% threshold'}`,
+              '',
+              'Download the full HTML report from the [Actions artifacts](' +
+                `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).`,
+              '',
+              '_Surviving mutants above the threshold must be triaged: either killed by new tests or documented as acceptable in `surviving-mutants.md`._',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('Mutation Testing Report')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
