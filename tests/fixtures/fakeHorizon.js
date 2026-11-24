@@ -17,13 +17,27 @@
  */
 
 let transactions = [];
+let transactionErrors = {};   // hash → Error — for Scenario 2 (#649)
 let latestLedgerSeq = 1000;
 let ledgerCounter = 1000;
 
 function reset() {
   transactions = [];
+  transactionErrors = {};
   latestLedgerSeq = 1000;
   ledgerCounter = 1000;
+}
+
+/**
+ * Register a network-level error for a specific transaction hash.
+ * When stellarService calls server.transactions().transaction(hash).call()
+ * for this hash it will reject with the given error instead of returning a
+ * transaction record — simulating Horizon being unreachable or timing out.
+ *
+ * Used by Scenario 2 (Horizon timeout) in paymentFailureScenarios.e2e.test.js.
+ */
+function addTransactionError(hash, error) {
+  transactionErrors[hash] = error;
 }
 
 /** Manually move the "tip" of the chain forward (e.g. to test pending_confirmation). */
@@ -95,6 +109,8 @@ const server = {
       transaction(hash) {
         return {
           async call() {
+            // Scenario 2 (#649): simulate Horizon being unreachable for this hash.
+            if (transactionErrors[hash]) throw transactionErrors[hash];
             const tx = findByHash(hash);
             if (!tx) throw notFoundError();
             return tx;
@@ -139,4 +155,4 @@ const server = {
   },
 };
 
-module.exports = { server, reset, setLatestLedger, addPaymentTransaction, findByHash };
+module.exports = { server, reset, setLatestLedger, addPaymentTransaction, addTransactionError, findByHash };
