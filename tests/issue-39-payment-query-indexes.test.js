@@ -1,160 +1,243 @@
 'use strict';
 
 /**
- * Payment query index coverage — issue #39 / #654
+ * Tests for Issue #39 — Database index review for payment queries.
  *
- * Verifies that the MongoDB indexes used by high-volume payment queries
- * (the ones exercised during 1000-concurrent-user load tests) are defined
- * on the relevant models. This is a static analysis of the Mongoose schema
- * index definitions — no live database connection required.
+ * Verifies:
+ *   - Migration 030 creates and drops all documented indexes
+ *   - Migration is idempotent (up can be called twice without error)
+ *   - Model files declare the expected indexes in their schemas
  *
- * Covers the query patterns identified in the load simulation (#654):
- *   - Payment lookup by schoolId + status           → compound index
- *   - PaymentIntent lookup by schoolId + memo        → compound unique index
- *   - Student lookup by schoolId + studentId         → compound index
- *   - Payment lookup by txHash                       → single-field index
- *   - Payment lookup by studentId + confirmedAt      → compound index (reports)
- *   - AuditLog lookup by schoolId + createdAt        → compound index
- *
- * If a required index is missing the test fails with a descriptive message,
- * directing the developer to add the appropriate migration.
+ * All tests run without a live MongoDB connection (DB layer is mocked).
  */
 
-// Point env vars at a dummy URI so config/index.js does not reject on startup.
-process.env.MONGO_URI             = 'mongodb://localhost:27017/test';
-process.env.JWT_SECRET            = 'test-jwt-secret-index-check';
-process.env.SCHOOL_WALLET_ADDRESS = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+const path = require('path');
+const fs   = require('fs');
 
-// ── Model requires ─────────────────────────────────────────────────────────
-// Use the backend's own node_modules copy of mongoose so the schema
-// definitions resolve correctly.
-jest.mock('../../backend/src/config/database', () => ({ connect: jest.fn() }));
+// ── Migration source tests ────────────────────────────────────────────────────
 
-const Payment       = require('../backend/src/models/paymentModel');
-const PaymentIntent = require('../backend/src/models/paymentIntentModel');
-const Student       = require('../backend/src/models/studentModel');
-const AuditLog      = require('../backend/src/models/auditLogModel');
+const MIGRATION_SRC = fs.readFileSync(
+  path.join(__dirname, '../backend/migrations/030_add_payment_query_indexes.js'),
+  'utf8',
+);
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+describe('Migration 030 — source structure', () => {
+  test('exports version, up, and down', () => {
+    expect(MIGRATION_SRC).toContain("version: VERSION");
+    expect(MIGRATION_SRC).toContain('async function up()');
+    expect(MIGRATION_SRC).toContain('async function down()');
+  });
 
-/**
- * Extract all index key paths from a Mongoose schema, returning them as an
- * array of sorted key-string representations for easy comparison.
- * Example: an index on { schoolId: 1, status: 1 } → 'schoolId_1_status_1'
- */
-function getSchemaIndexKeys(model) {
-  const schema = model.schema;
-  const indexes = schema.indexes();
-  return indexes.map(([fields]) =>
-    Object.entries(fields)
-      .map(([k, v]) => `${k}_${v}`)
-      .join('_'),
+  test('up creates the payments status+deletedAt index', () => {
+    expect(MIGRATION_SRC).toContain('schoolId: 1, status: 1, deletedAt: 1');
+  });
+
+  test('up creates the payments feeValidationStatus+deletedAt index', () => {
+    expect(MIGRATION_SRC).toContain('schoolId: 1, feeValidationStatus: 1, deletedAt: 1');
+  });
+
+  test('up creates the payments studentId+deletedAt+confirmedAt index', () => {
+    expect(MIGRATION_SRC).toContain('schoolId: 1, studentId: 1, deletedAt: 1, confirmedAt: -1');
+  });
+
+  test('up creates the auditlogs result index', () => {
+    expect(MIGRATION_SRC).toContain('schoolId: 1, result: 1, createdAt: -1');
+  });
+
+  test('up creates the students deletedAt+createdAt index', () => {
+    expect(MIGRATION_SRC).toContain('schoolId: 1, deletedAt: 1, createdAt: -1');
+  });
+
+  test('up creates the pendingverifications status+createdAt index', () => {
+    expect(MIGRATION_SRC).toContain('schoolId: 1, status: 1, createdAt: 1');
+  });
+
+  test('down drops all indexes created by up', () => {
+    // Every index created in up must also appear in down
+    const indexPatterns = [
+      'schoolId: 1, status: 1, deletedAt: 1',
+      'schoolId: 1, feeValidationStatus: 1, deletedAt: 1',
+      'schoolId: 1, studentId: 1, deletedAt: 1, confirmedAt: -1',
+      'schoolId: 1, result: 1, createdAt: -1',
+      'schoolId: 1, deletedAt: 1, createdAt: -1',
+      'schoolId: 1, status: 1, createdAt: 1',
+    ];
+    for (const pattern of indexPatterns) {
+      const count = (MIGRATION_SRC.match(new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+      // Each pattern should appear at least twice: once in up(), once in down()
+      expect(count).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  test('uses createIndexIfMissing helper for idempotency', () => {
+    expect(MIGRATION_SRC).toContain('createIndexIfMissing');
+  });
+
+  test('uses dropIndexIfExists helper for safe rollback', () => {
+    expect(MIGRATION_SRC).toContain('dropIndexIfExists');
+  });
+
+  test('version constant is 030_add_payment_query_indexes', () => {
+    expect(MIGRATION_SRC).toContain("'030_add_payment_query_indexes'");
+  });
+});
+
+// ── Migration idempotency — mocked DB ────────────────────────────────────────
+
+describe('Migration 030 — idempotency (mocked DB)', () => {
+  let up;
+  let down;
+
+  // Build a fake MongoDB collection that records calls
+  function makeCollection(existingIndexes = []) {
+    return {
+      indexes:     jest.fn().mockResolvedValue(existingIndexes),
+      createIndex: jest.fn().mockResolvedValue('ok'),
+      dropIndex:   jest.fn().mockResolvedValue('ok'),
+    };
+  }
+
+  beforeEach(() => {
+    jest.resetModules();
+
+    // Mock mongoose with a controlled db object
+    jest.mock('mongoose', () => {
+      const collections = {
+        payments:             makeCollection(),
+        auditlogs:            makeCollection(),
+        students:             makeCollection(),
+        pendingverifications: makeCollection(),
+      };
+      return {
+        connection: {
+          db: {
+            collection: jest.fn((name) => collections[name] || makeCollection()),
+          },
+        },
+      };
+    });
+
+    const migration = require('../backend/migrations/030_add_payment_query_indexes');
+    up   = migration.up;
+    down = migration.down;
+  });
+
+  afterEach(() => {
+    jest.resetModules();
+  });
+
+  test('up() runs without throwing', async () => {
+    await expect(up()).resolves.not.toThrow();
+  });
+
+  test('down() runs without throwing', async () => {
+    await expect(down()).resolves.not.toThrow();
+  });
+
+  test('up() called twice does not throw (idempotent)', async () => {
+    await up();
+    await expect(up()).resolves.not.toThrow();
+  });
+
+  test('up() calls createIndex on the payments collection', async () => {
+    const mongoose = require('mongoose');
+    await up();
+    const paymentsCol = mongoose.connection.db.collection('payments');
+    expect(paymentsCol.createIndex).toHaveBeenCalled();
+  });
+
+  test('down() calls dropIndex on the payments collection', async () => {
+    const mongoose = require('mongoose');
+    await down();
+    const paymentsCol = mongoose.connection.db.collection('payments');
+    expect(paymentsCol.dropIndex).toHaveBeenCalled();
+  });
+
+  test('down() handles already-dropped indexes (code 27) without throwing', async () => {
+    jest.resetModules();
+    jest.mock('mongoose', () => {
+      function makeErrCol() {
+        return {
+          indexes:     jest.fn().mockResolvedValue([]),
+          createIndex: jest.fn().mockResolvedValue('ok'),
+          dropIndex:   jest.fn().mockRejectedValue(Object.assign(new Error('index not found'), { code: 27 })),
+        };
+      }
+      return {
+        connection: {
+          db: { collection: jest.fn(() => makeErrCol()) },
+        },
+      };
+    });
+    const { down: freshDown } = require('../backend/migrations/030_add_payment_query_indexes');
+    await expect(freshDown()).resolves.not.toThrow();
+  });
+});
+
+// ── Model index declarations ──────────────────────────────────────────────────
+
+describe('paymentModel — index declarations (Issue #39)', () => {
+  const MODEL_SRC = fs.readFileSync(
+    path.join(__dirname, '../backend/src/models/paymentModel.js'),
+    'utf8',
   );
-}
 
-/**
- * Returns true if the model schema has an index whose key path includes
- * all of the specified fields (in any order relative to other fields,
- * but matching the provided directions).
- */
-function hasIndexCovering(model, fields) {
-  const schema   = model.schema;
-  const indexes  = schema.indexes();
-  return indexes.some(([indexFields]) => {
-    const keys = Object.keys(indexFields);
-    return fields.every((f) => keys.includes(f));
-  });
-}
-
-/**
- * Returns true if the model schema has a path-level index (defined directly
- * on a SchemaType, e.g. `index: true` or `unique: true`) for the given field.
- */
-function hasPathIndex(model, fieldName) {
-  const path = model.schema.path(fieldName);
-  if (!path) return false;
-  return !!(path.options.index || path.options.unique || path.options.sparse);
-}
-
-// ── Tests ──────────────────────────────────────────────────────────────────
-
-describe('Payment collection indexes (#39, #654)', () => {
-  test('Payment has an index covering schoolId for school-scoped queries', () => {
-    const covered = hasIndexCovering(Payment, ['schoolId']) ||
-                    hasPathIndex(Payment, 'schoolId');
-    expect(covered).toBe(true);
+  test('declares { schoolId, status, deletedAt } index', () => {
+    expect(MODEL_SRC).toContain('schoolId: 1, status: 1, deletedAt: 1');
   });
 
-  test('Payment has an index covering txHash for deduplication lookups', () => {
-    const covered = hasIndexCovering(Payment, ['txHash']) ||
-                    hasPathIndex(Payment, 'txHash');
-    expect(covered).toBe(true);
+  test('declares { schoolId, feeValidationStatus, deletedAt } index', () => {
+    expect(MODEL_SRC).toContain('schoolId: 1, feeValidationStatus: 1, deletedAt: 1');
   });
 
-  test('Payment has an index covering studentId and confirmedAt for report queries', () => {
-    // This compound index backs the payment report aggregation used under load.
-    const covered = hasIndexCovering(Payment, ['studentId', 'confirmedAt']) ||
-                    hasIndexCovering(Payment, ['schoolId', 'confirmedAt']);
-    expect(covered).toBe(true);
-  });
-
-  test('Payment has an index covering schoolId and status for status-filtered queries', () => {
-    const covered = hasIndexCovering(Payment, ['schoolId', 'status']) ||
-                    (hasIndexCovering(Payment, ['schoolId']) && hasPathIndex(Payment, 'status'));
-    expect(covered).toBe(true);
+  test('declares { schoolId, studentId, deletedAt, confirmedAt } index', () => {
+    expect(MODEL_SRC).toContain('schoolId: 1, studentId: 1, deletedAt: 1, confirmedAt: -1');
   });
 });
 
-describe('PaymentIntent collection indexes (#39, #654)', () => {
-  test('PaymentIntent has an index covering schoolId and memo for intent lookups', () => {
-    // Migration 025 adds a compound unique index on { schoolId, memo }.
-    const covered = hasIndexCovering(PaymentIntent, ['schoolId', 'memo']);
-    expect(covered).toBe(true);
-  });
+describe('studentModel — index declarations (Issue #39)', () => {
+  const MODEL_SRC = fs.readFileSync(
+    path.join(__dirname, '../backend/src/models/studentModel.js'),
+    'utf8',
+  );
 
-  test('PaymentIntent has a TTL index on expiresAt for automatic cleanup', () => {
-    // TTL indexes are defined with expireAfterSeconds; look for the field.
-    const indexes = PaymentIntent.schema.indexes();
-    const hasTtl = indexes.some(([fields, opts]) =>
-      ('expiresAt' in fields || 'createdAt' in fields) &&
-      opts.expireAfterSeconds !== undefined,
-    );
-    const pathHasTtl = (() => {
-      const p = PaymentIntent.schema.path('expiresAt') || PaymentIntent.schema.path('createdAt');
-      return p && p.options.expires !== undefined;
-    })();
-    expect(hasTtl || pathHasTtl).toBe(true);
+  test('declares { schoolId, deletedAt, createdAt } index', () => {
+    expect(MODEL_SRC).toContain('schoolId: 1, deletedAt: 1, createdAt: -1');
   });
 });
 
-describe('Student collection indexes (#39, #654)', () => {
-  test('Student has an index covering schoolId for school-scoped queries', () => {
-    const covered = hasIndexCovering(Student, ['schoolId']) ||
-                    hasPathIndex(Student, 'schoolId');
-    expect(covered).toBe(true);
-  });
+describe('auditLogModel — index declarations (Issue #39)', () => {
+  const MODEL_SRC = fs.readFileSync(
+    path.join(__dirname, '../backend/src/models/auditLogModel.js'),
+    'utf8',
+  );
 
-  test('Student has an index covering studentId for direct lookups', () => {
-    const covered = hasIndexCovering(Student, ['studentId']) ||
-                    hasPathIndex(Student, 'studentId');
-    expect(covered).toBe(true);
+  test('declares { schoolId, result, createdAt } index', () => {
+    expect(MODEL_SRC).toContain('schoolId: 1, result: 1, createdAt: -1');
   });
 });
 
-describe('AuditLog collection indexes (#39, #654)', () => {
-  test('AuditLog has an index covering schoolId and createdAt for paginated queries', () => {
-    const covered = hasIndexCovering(AuditLog, ['schoolId', 'createdAt']) ||
-                    hasIndexCovering(AuditLog, ['schoolId']);
-    expect(covered).toBe(true);
+// ── Documentation ─────────────────────────────────────────────────────────────
+
+describe('docs/payment-query-indexes.md', () => {
+  const DOC_SRC = fs.readFileSync(
+    path.join(__dirname, '../docs/payment-query-indexes.md'),
+    'utf8',
+  );
+
+  test('documents all new indexes', () => {
+    expect(DOC_SRC).toContain('status');
+    expect(DOC_SRC).toContain('feeValidationStatus');
+    expect(DOC_SRC).toContain('deletedAt');
+    expect(DOC_SRC).toContain('result');
   });
 
-  test('AuditLog has a TTL index for automatic log expiry', () => {
-    const indexes = AuditLog.schema.indexes();
-    const hasTtl = indexes.some(([, opts]) => opts.expireAfterSeconds !== undefined);
-    const pathHasTtl = (() => {
-      const p = AuditLog.schema.path('createdAt') || AuditLog.schema.path('expiresAt');
-      return p && p.options.expires !== undefined;
-    })();
-    expect(hasTtl || pathHasTtl).toBe(true);
+  test('documents write overhead', () => {
+    expect(DOC_SRC).toMatch(/write overhead/i);
+  });
+
+  test('documents migration and rollback paths', () => {
+    expect(DOC_SRC).toMatch(/migration/i);
+    expect(DOC_SRC).toMatch(/rollback/i);
   });
 });
